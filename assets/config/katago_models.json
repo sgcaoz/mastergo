@@ -1,0 +1,16 @@
+{
+  "defaultModelId": "standard",
+  "models": [
+    {
+      "id": "standard",
+      "name": "KataGo Standard",
+      "engineFamily": "kata1",
+      "tier": "standard",
+      "assetPath": "assets/models/katago/standard.bin.gz",
+      "networkName": "kata1-b28c512nbt-s12192929536-d5655876072",
+      "sourceUrl": "https://media.katagotraining.org/uploaded/networks/models/kata1/kata1-b28c512nbt-s12192929536-d5655876072.bin.gz",
+      "sha256": "6d62321defca9e2d3bd768379d77a817915125781886b83f73782c984b732d99",
+      "notes": "Strongest confidently-rated network at installation time."
+    }
+  ]
+}

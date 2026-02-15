@@ -1,0 +1,31 @@
+{
+  "presets": [
+    {
+      "id": "chinese_standard",
+      "name": "中国规则",
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "scoringRule": "area",
+      "koRule": "situationalSuperko",
+      "whiteHandicapBonusMode": "N"
+    },
+    {
+      "id": "japanese_standard",
+      "name": "日本规则",
+      "ruleset": "japanese",
+      "komi": 6.5,
+      "scoringRule": "territory",
+      "koRule": "simple",
+      "whiteHandicapBonusMode": "N-1"
+    },
+    {
+      "id": "korean_standard",
+      "name": "韩国规则",
+      "ruleset": "korean",
+      "komi": 6.5,
+      "scoringRule": "territory",
+      "koRule": "situationalSuperko",
+      "whiteHandicapBonusMode": "N-1"
+    }
+  ]
+}
