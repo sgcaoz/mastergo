@@ -1,18 +1,33 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:mastergo/application/analysis/game_analysis_service.dart';
 import 'package:mastergo/domain/entities/analysis_profile.dart';
-import 'package:mastergo/domain/entities/game_rules.dart';
-import 'package:mastergo/domain/entities/game_setup.dart';
+import 'package:mastergo/domain/entities/rule_presets.dart';
 import 'package:mastergo/domain/go/go_game.dart';
 import 'package:mastergo/domain/go/go_types.dart';
 import 'package:mastergo/domain/sgf/sgf_parser.dart';
 import 'package:mastergo/features/common/go_board_widget.dart';
+import 'package:mastergo/features/common/winrate_chart.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
+import 'package:mastergo/infra/storage/game_record_repository.dart';
 
 class RecordReviewPage extends StatefulWidget {
-  const RecordReviewPage({super.key});
+  const RecordReviewPage({
+    super.key,
+    this.initialSgfContent,
+    this.initialTitle,
+    this.initialRecordId,
+    this.initialSource,
+  });
+
+  final String? initialSgfContent;
+  final String? initialTitle;
+  final String? initialRecordId;
+  final String? initialSource;
 
   @override
   State<RecordReviewPage> createState() => _RecordReviewPageState();
@@ -21,9 +36,12 @@ class RecordReviewPage extends StatefulWidget {
 class _RecordReviewPageState extends State<RecordReviewPage> {
   final SgfParser _sgfParser = const SgfParser();
   final KatagoAdapter _katagoAdapter = PlatformKatagoAdapter();
+  final GameAnalysisService _analysisService = const GameAnalysisService();
+  final GameRecordRepository _recordRepository = GameRecordRepository();
   final TextEditingController _komiController = TextEditingController(
     text: '6.5',
   );
+  final TextEditingController _urlController = TextEditingController();
   final AnalysisProfile _analysisProfile = const AnalysisProfile(
     id: 'review-default',
     name: '复盘分析',
@@ -38,13 +56,36 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   List<SgfNode> _path = <SgfNode>[];
   int _selectedVariation = 0;
   bool _analyzing = false;
+  bool _downloading = false;
   final Map<int, double> _winrates = <int, double>{};
   String? _status;
+  String? _recordId;
+  String _recordSource = 'import';
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialSgfContent != null &&
+        widget.initialSgfContent!.isNotEmpty) {
+      final SgfGame parsed = _sgfParser.parse(widget.initialSgfContent!);
+      _sgf = parsed;
+      _ruleset = parsed.rules.isEmpty
+          ? _ruleset
+          : rulePresetFromString(parsed.rules).id;
+      _komiController.text = parsed.komi.toString();
+      _recordId = widget.initialRecordId;
+      _recordSource = widget.initialSource ?? 'master';
+      _status = widget.initialTitle == null
+          ? '已加载棋谱'
+          : '已加载 ${widget.initialTitle}';
+    }
+  }
 
   @override
   void dispose() {
     unawaited(_katagoAdapter.shutdown());
     _komiController.dispose();
+    _urlController.dispose();
     super.dispose();
   }
 
@@ -68,13 +109,100 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     final SgfGame parsed = _sgfParser.parse(content);
     setState(() {
       _sgf = parsed;
-      _ruleset = parsed.rules.isEmpty ? _ruleset : parsed.rules;
+      _ruleset = parsed.rules.isEmpty
+          ? _ruleset
+          : rulePresetFromString(parsed.rules).id;
       _komiController.text = parsed.komi.toString();
       _path = <SgfNode>[];
       _selectedVariation = 0;
       _winrates.clear();
       _status = '已导入 ${file.name}';
     });
+    _recordId = _recordRepository.newId(prefix: 'import');
+    _recordSource = 'import';
+    await _recordRepository.saveOrUpdateSourceRecord(
+      id: _recordId,
+      source: _recordSource,
+      title: file.name,
+      boardSize: parsed.boardSize,
+      ruleset: parsed.rules.isEmpty
+          ? _ruleset
+          : rulePresetFromString(parsed.rules).id,
+      komi: parsed.komi,
+      sgf: content,
+      status: 'ready',
+      winrateJson: jsonEncode(<String, double>{}),
+    );
+  }
+
+  Future<void> _downloadSgf() async {
+    final String url = _urlController.text.trim();
+    if (url.isEmpty) {
+      setState(() {
+        _status = '请输入 SGF 下载链接';
+      });
+      return;
+    }
+    setState(() {
+      _downloading = true;
+      _status = '下载中...';
+    });
+    try {
+      final Uri uri = Uri.parse(url);
+      final http.Response response = await http.get(uri);
+      if (response.statusCode != 200) {
+        throw StateError('HTTP ${response.statusCode}');
+      }
+      final String content = response.body;
+      if (content.trim().isEmpty) {
+        throw StateError('下载内容为空');
+      }
+      final SgfGame parsed = _sgfParser.parse(content);
+      _recordId = _recordRepository.newId(prefix: 'download');
+      _recordSource = 'download';
+      await _recordRepository.saveOrUpdateSourceRecord(
+        id: _recordId,
+        source: _recordSource,
+        title: uri.pathSegments.isNotEmpty
+            ? uri.pathSegments.last
+            : 'downloaded.sgf',
+        boardSize: parsed.boardSize,
+        ruleset: parsed.rules.isEmpty
+            ? _ruleset
+            : rulePresetFromString(parsed.rules).id,
+        komi: parsed.komi,
+        sgf: content,
+        status: 'ready',
+        winrateJson: jsonEncode(<String, double>{}),
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _sgf = parsed;
+        _ruleset = parsed.rules.isEmpty
+            ? _ruleset
+            : rulePresetFromString(parsed.rules).id;
+        _komiController.text = parsed.komi.toString();
+        _path = <SgfNode>[];
+        _selectedVariation = 0;
+        _winrates.clear();
+        _status = '下载并导入成功';
+      });
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _status = '下载失败: $e';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _downloading = false;
+        });
+      }
+    }
   }
 
   GoGameState? _stateAtPath() {
@@ -105,45 +233,52 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _winrates.clear();
     });
     try {
-      await _katagoAdapter.ensureStarted();
       final double komi = double.tryParse(_komiController.text) ?? _sgf!.komi;
-      final List<SgfNode> line = _currentLine();
-      for (int turn = 0; turn <= line.length; turn++) {
-        final List<String> moveTokens = line
-            .take(turn)
-            .where((SgfNode n) => n.move != null)
-            .map((SgfNode n) => n.move!)
-            .map((GoMove m) => m.toProtocolToken(_sgf!.boardSize))
-            .toList();
-
-        final KatagoAnalyzeResult res = await _katagoAdapter.analyze(
-          KatagoAnalyzeRequest(
-            queryId: 'review-$turn-${DateTime.now().millisecondsSinceEpoch}',
-            moves: moveTokens,
-            gameSetup: GameSetup(
-              boardSize: _sgf!.boardSize,
-              startingPlayer: StoneColor.black,
+      final List<String> moveTokens = _currentLine()
+          .where((SgfNode n) => n.move != null)
+          .map((SgfNode n) => n.move!)
+          .map((GoMove m) => m.toProtocolToken(_sgf!.boardSize))
+          .toList();
+      final Map<int, double> data = await _analysisService.analyzeTurns(
+        adapter: _katagoAdapter,
+        moveTokens: moveTokens,
+        boardSize: _sgf!.boardSize,
+        ruleset: _ruleset,
+        komi: komi,
+        profile: _analysisProfile,
+        onProgress: (int turn, int total) {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _status = '分析中: $turn/$total';
+          });
+        },
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _winrates
+          ..clear()
+          ..addAll(data);
+      });
+      if (_recordId != null) {
+        await _recordRepository.saveOrUpdateSourceRecord(
+          id: _recordId,
+          source: _recordSource,
+          title: _sgf?.gameName ?? 'review',
+          boardSize: _sgf!.boardSize,
+          ruleset: _ruleset,
+          komi: komi,
+          sgf: _renderCurrentSgf(),
+          status: 'analyzed',
+          winrateJson: jsonEncode(
+            data.map(
+              (int k, double v) => MapEntry<String, double>(k.toString(), v),
             ),
-            rules: GameRules(
-              ruleset: _ruleset,
-              komi: komi,
-              scoringRule: _ruleset == 'japanese'
-                  ? ScoringRule.territory
-                  : ScoringRule.area,
-              koRule: _ruleset == 'japanese'
-                  ? KoRule.simple
-                  : KoRule.situationalSuperko,
-            ),
-            profile: _analysisProfile,
           ),
         );
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _winrates[turn] = res.winrate;
-          _status = '分析中: $turn/${line.length}';
-        });
       }
       setState(() {
         _status = '分析完成';
@@ -169,6 +304,37 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       line.add(cursor);
     }
     return line;
+  }
+
+  String _renderCurrentSgf() {
+    if (_sgf == null) {
+      return '';
+    }
+    final List<SgfNode> line = _currentLine();
+    final StringBuffer sb = StringBuffer();
+    sb.write('(;GM[1]FF[4]SZ[');
+    sb.write(_sgf!.boardSize);
+    sb.write(']KM[');
+    sb.write(_sgf!.komi);
+    sb.write(']');
+    sb.write('RU[');
+    sb.write(_ruleset);
+    sb.write(']');
+    for (final SgfNode node in line) {
+      final GoMove? move = node.move;
+      if (move == null) {
+        continue;
+      }
+      final String color = move.player == GoStone.black ? 'B' : 'W';
+      if (move.isPass || move.point == null) {
+        sb.write(';$color[]');
+      } else {
+        const String letters = 'abcdefghijklmnopqrstuvwxyz';
+        sb.write(';$color[${letters[move.point!.x]}${letters[move.point!.y]}]');
+      }
+    }
+    sb.write(')');
+    return sb.toString();
   }
 
   SgfNode? get _currentNode =>
@@ -201,8 +367,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   @override
   Widget build(BuildContext context) {
     final GoGameState? boardState = _stateAtPath();
-
-    return ListView(
+    final Widget content = ListView(
       padding: const EdgeInsets.all(16),
       children: <Widget>[
         Text('打谱', style: Theme.of(context).textTheme.headlineSmall),
@@ -213,6 +378,26 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           onPressed: _importSgf,
           icon: const Icon(Icons.upload_file),
           label: const Text('导入棋谱'),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: _urlController,
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
+            labelText: '在线棋谱链接（SGF URL）',
+          ),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: _downloading ? null : _downloadSgf,
+          icon: _downloading
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.download),
+          label: const Text('下载并导入棋谱'),
         ),
         if (_sgf != null) ...<Widget>[
           const SizedBox(height: 12),
@@ -227,17 +412,20 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
           initialValue: _ruleset,
-          items: const <DropdownMenuItem<String>>[
-            DropdownMenuItem<String>(value: 'chinese', child: Text('中国规则')),
-            DropdownMenuItem<String>(value: 'japanese', child: Text('日本规则')),
-            DropdownMenuItem<String>(value: 'korean', child: Text('韩国规则')),
-          ],
+          items: kRulePresets
+              .map(
+                (RulePreset p) =>
+                    DropdownMenuItem<String>(value: p.id, child: Text(p.label)),
+              )
+              .toList(),
           onChanged: (String? value) {
             if (value == null) {
               return;
             }
             setState(() {
-              _ruleset = value;
+              final RulePreset preset = rulePresetFromString(value);
+              _ruleset = preset.id;
+              _komiController.text = preset.defaultKomi.toStringAsFixed(1);
             });
           },
           decoration: const InputDecoration(
@@ -320,7 +508,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           const SizedBox(height: 10),
           SizedBox(
             height: 180,
-            child: _WinrateChart(
+            child: WinrateChart(
               winrates: _winrates,
               maxTurn: _currentLine().length,
             ),
@@ -336,81 +524,15 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         ],
       ],
     );
-  }
-}
 
-class _WinrateChart extends StatelessWidget {
-  const _WinrateChart({required this.winrates, required this.maxTurn});
-
-  final Map<int, double> winrates;
-  final int maxTurn;
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      painter: _WinratePainter(
-        winrates: winrates,
-        maxTurn: maxTurn,
-        lineColor: Theme.of(context).colorScheme.primary,
-      ),
-      child: Container(
-        decoration: BoxDecoration(border: Border.all(color: Colors.black12)),
-      ),
-    );
-  }
-}
-
-class _WinratePainter extends CustomPainter {
-  const _WinratePainter({
-    required this.winrates,
-    required this.maxTurn,
-    required this.lineColor,
-  });
-
-  final Map<int, double> winrates;
-  final int maxTurn;
-  final Color lineColor;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final Paint axisPaint = Paint()
-      ..color = Colors.black26
-      ..strokeWidth = 1;
-    canvas.drawLine(
-      Offset(0, size.height),
-      Offset(size.width, size.height),
-      axisPaint,
-    );
-    canvas.drawLine(const Offset(0, 0), Offset(0, size.height), axisPaint);
-
-    if (winrates.length < 2 || maxTurn <= 0) {
-      return;
+    final ModalRoute<dynamic>? route = ModalRoute.of(context);
+    final bool isPushedPage = route?.canPop == true;
+    if (isPushedPage) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('打谱复盘')),
+        body: content,
+      );
     }
-
-    final List<int> turns = winrates.keys.toList()..sort();
-    final Path path = Path();
-    for (int i = 0; i < turns.length; i++) {
-      final int t = turns[i];
-      final double wr = winrates[t]!.clamp(0.0, 1.0);
-      final double x = size.width * (t / maxTurn);
-      final double y = size.height * (1 - wr);
-      if (i == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
-    }
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = lineColor
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _WinratePainter oldDelegate) {
-    return oldDelegate.winrates != winrates || oldDelegate.maxTurn != maxTurn;
+    return Material(child: content);
   }
 }

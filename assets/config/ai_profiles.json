@@ -4,24 +4,32 @@
       "id": "beginner",
       "name": "入门",
       "description": "极速响应，约业余2-4段，适合新手练习布局与定式",
-      "maxVisits": 10,
-      "thinkingTimeMs": 300,
+      "maxVisits": 2,
+      "thinkingTimeMs": 200,
       "includeOwnership": false
     },
     {
       "id": "intermediate",
       "name": "进阶",
       "description": "平衡强度与速度，约业余4-6段，适合日常对弈",
-      "maxVisits": 28,
-      "thinkingTimeMs": 900,
+      "maxVisits": 10,
+      "thinkingTimeMs": 600,
       "includeOwnership": false
     },
     {
-      "id": "advanced",
-      "name": "高阶",
-      "description": "深度搜索，约业余强6段及以上，允许超长思考延时",
-      "maxVisits": 64,
-      "thinkingTimeMs": 3000,
+      "id": "professional",
+      "name": "专业",
+      "description": "更深搜索，适合系统训练与认真复盘",
+      "maxVisits": 30,
+      "thinkingTimeMs": 1500,
+      "includeOwnership": true
+    },
+    {
+      "id": "master",
+      "name": "大师",
+      "description": "高强度搜索，允许超长思考延时",
+      "maxVisits": 60,
+      "thinkingTimeMs": 2600,
       "includeOwnership": true
     }
   ]

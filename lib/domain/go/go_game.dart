@@ -1,5 +1,6 @@
 import 'dart:collection';
 
+import 'package:mastergo/domain/entities/game_rules.dart';
 import 'package:mastergo/domain/go/go_types.dart';
 
 class GoGameState {
@@ -10,6 +11,8 @@ class GoGameState {
     List<GoMove>? moves,
     this.previousBoardHash = '',
     this.consecutivePasses = 0,
+    this.blackCaptures = 0,
+    this.whiteCaptures = 0,
   }) : board =
            board ??
            List<List<GoStone?>>.generate(
@@ -24,6 +27,8 @@ class GoGameState {
   final List<GoMove> moves;
   final String previousBoardHash;
   final int consecutivePasses;
+  final int blackCaptures;
+  final int whiteCaptures;
 
   bool inBounds(GoPoint p) =>
       p.x >= 0 && p.x < boardSize && p.y >= 0 && p.y < boardSize;
@@ -42,6 +47,8 @@ class GoGameState {
         moves: <GoMove>[...moves, move],
         previousBoardHash: boardHash(board),
         consecutivePasses: consecutivePasses + 1,
+        blackCaptures: blackCaptures,
+        whiteCaptures: whiteCaptures,
       );
     }
 
@@ -55,6 +62,7 @@ class GoGameState {
 
     final List<List<GoStone?>> nextBoard = _copyBoard(board);
     nextBoard[point.y][point.x] = move.player;
+    int capturedStones = 0;
 
     final GoStone enemy = move.player.opposite();
     for (final GoPoint n in _neighbors(point)) {
@@ -63,6 +71,7 @@ class GoGameState {
       }
       final _Group group = _collectGroup(nextBoard, n);
       if (group.liberties.isEmpty) {
+        capturedStones += group.stones.length;
         for (final GoPoint gp in group.stones) {
           nextBoard[gp.y][gp.x] = null;
         }
@@ -86,7 +95,19 @@ class GoGameState {
       moves: <GoMove>[...moves, move],
       previousBoardHash: boardHash(board),
       consecutivePasses: 0,
+      blackCaptures: move.player == GoStone.black
+          ? blackCaptures + capturedStones
+          : blackCaptures,
+      whiteCaptures: move.player == GoStone.white
+          ? whiteCaptures + capturedStones
+          : whiteCaptures,
     );
+  }
+
+  GoScore scoreByRules(GameRules rules) {
+    return rules.scoringRule == ScoringRule.area
+        ? scoreChineseArea(komi: rules.komi)
+        : scoreTerritory(komi: rules.komi);
   }
 
   GoScore scoreChineseArea({double komi = 7.5}) {
@@ -132,6 +153,56 @@ class GoGameState {
       komi: komi,
       blackArea: blackArea,
       whiteArea: whiteArea,
+      blackCaptures: blackCaptures,
+      whiteCaptures: whiteCaptures,
+    );
+  }
+
+  GoScore scoreTerritory({double komi = 6.5}) {
+    int blackStones = 0;
+    int whiteStones = 0;
+    int blackTerritory = 0;
+    int whiteTerritory = 0;
+    final Set<GoPoint> visited = <GoPoint>{};
+
+    for (int y = 0; y < boardSize; y++) {
+      for (int x = 0; x < boardSize; x++) {
+        final GoStone? s = board[y][x];
+        if (s == GoStone.black) {
+          blackStones++;
+          continue;
+        }
+        if (s == GoStone.white) {
+          whiteStones++;
+          continue;
+        }
+        final GoPoint p = GoPoint(x, y);
+        if (visited.contains(p)) {
+          continue;
+        }
+        final _Region region = _collectEmptyRegion(p, visited);
+        if (region.borderColors.length == 1) {
+          if (region.borderColors.contains(GoStone.black)) {
+            blackTerritory += region.points.length;
+          } else {
+            whiteTerritory += region.points.length;
+          }
+        }
+      }
+    }
+
+    final double blackScore = blackTerritory + blackCaptures.toDouble();
+    final double whiteScore = whiteTerritory + whiteCaptures + komi;
+    return GoScore(
+      blackStones: blackStones,
+      whiteStones: whiteStones,
+      blackTerritory: blackTerritory,
+      whiteTerritory: whiteTerritory,
+      komi: komi,
+      blackArea: blackScore,
+      whiteArea: whiteScore,
+      blackCaptures: blackCaptures,
+      whiteCaptures: whiteCaptures,
     );
   }
 
@@ -264,6 +335,8 @@ class GoScore {
     required this.komi,
     required this.blackArea,
     required this.whiteArea,
+    this.blackCaptures = 0,
+    this.whiteCaptures = 0,
   });
 
   final int blackStones;
@@ -273,6 +346,8 @@ class GoScore {
   final double komi;
   final double blackArea;
   final double whiteArea;
+  final int blackCaptures;
+  final int whiteCaptures;
 
   double get leadForBlack => blackArea - whiteArea;
 

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:mastergo/domain/entities/master_game_meta.dart';
+import 'package:mastergo/features/record_review/record_review_page.dart';
 import 'package:mastergo/infra/config/master_game_repository.dart';
+import 'package:mastergo/infra/storage/game_record_repository.dart';
 
 class MasterGamesPage extends StatelessWidget {
   const MasterGamesPage({super.key});
@@ -8,6 +10,7 @@ class MasterGamesPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final MasterGameRepository repository = MasterGameRepository();
+    final GameRecordRepository recordRepository = GameRecordRepository();
 
     return FutureBuilder<List<MasterGameMeta>>(
       future: repository.loadIndex(),
@@ -45,47 +48,26 @@ class MasterGamesPage extends StatelessWidget {
                       final String sgf = await repository.loadSgfContent(
                         item.sgfAssetPath,
                       );
+                      await recordRepository.saveMasterGame(
+                        id: 'master-${item.id}',
+                        title: item.title,
+                        boardSize: item.boardSize,
+                        ruleset: item.ruleset,
+                        komi: item.komi,
+                        sgf: sgf,
+                      );
                       if (!context.mounted) {
                         return;
                       }
-                      await showModalBottomSheet<void>(
-                        context: context,
-                        isScrollControlled: true,
-                        builder: (BuildContext context) {
-                          return DraggableScrollableSheet(
-                            expand: false,
-                            builder:
-                                (
-                                  BuildContext context,
-                                  ScrollController controller,
-                                ) {
-                                  return Padding(
-                                    padding: const EdgeInsets.all(16),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: <Widget>[
-                                        Text(
-                                          item.title,
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.titleLarge,
-                                        ),
-                                        const SizedBox(height: 8),
-                                        const Text('SGF 预览（后续接入完整复盘页）'),
-                                        const SizedBox(height: 8),
-                                        Expanded(
-                                          child: SingleChildScrollView(
-                                            controller: controller,
-                                            child: SelectableText(sgf),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                          );
-                        },
+                      await Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => RecordReviewPage(
+                            initialSgfContent: sgf,
+                            initialTitle: item.title,
+                            initialRecordId: 'master-${item.id}',
+                            initialSource: 'master',
+                          ),
+                        ),
                       );
                     },
                   ),

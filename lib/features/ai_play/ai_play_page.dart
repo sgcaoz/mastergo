@@ -1,17 +1,23 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:mastergo/application/analysis/game_analysis_service.dart';
 import 'package:mastergo/domain/entities/analysis_profile.dart';
 import 'package:mastergo/domain/entities/game_rules.dart';
+import 'package:mastergo/domain/entities/rule_presets.dart';
 import 'package:mastergo/domain/entities/game_setup.dart';
+import 'package:mastergo/domain/entities/game_record.dart';
 import 'package:mastergo/domain/go/go_game.dart';
 import 'package:mastergo/domain/go/go_types.dart';
 import 'package:mastergo/features/common/go_board_widget.dart';
+import 'package:mastergo/features/common/winrate_chart.dart';
 import 'package:mastergo/infra/config/ai_profile_repository.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
+import 'package:mastergo/infra/storage/game_record_repository.dart';
 
 class AIPlayPage extends StatefulWidget {
   const AIPlayPage({super.key});
@@ -29,6 +35,7 @@ class _AIPlayPageState extends State<AIPlayPage> {
   int _boardSize = 19;
   int _handicap = 0;
   bool _guessFirst = true;
+  String _selectedRulesetId = 'chinese';
   String? _selectedProfileId;
   String? _engineStatus;
   String? _engineDiagnostics;
@@ -51,6 +58,8 @@ class _AIPlayPageState extends State<AIPlayPage> {
     }
     return _profilesCache.first;
   }
+
+  RulePreset get _activeRulePreset => rulePresetFromString(_selectedRulesetId);
 
   Future<void> _checkEngine() async {
     setState(() {
@@ -106,6 +115,7 @@ class _AIPlayPageState extends State<AIPlayPage> {
           boardSize: _boardSize,
           handicap: _handicap,
           randomFirst: _guessFirst,
+          rules: _activeRulePreset.toGameRules(),
         ),
       ),
     );
@@ -121,135 +131,173 @@ class _AIPlayPageState extends State<AIPlayPage> {
   Widget build(BuildContext context) {
     return FutureBuilder<List<AnalysisProfile>>(
       future: _profileRepository.loadProfiles(),
-      builder: (BuildContext context, AsyncSnapshot<List<AnalysisProfile>> snap) {
-        if (snap.connectionState != ConnectionState.done) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snap.hasError) {
-          return Center(child: Text('加载难度配置失败: ${snap.error}'));
-        }
-        final List<AnalysisProfile> profiles = snap.data ?? <AnalysisProfile>[];
-        _profilesCache
-          ..clear()
-          ..addAll(profiles);
-        if (_selectedProfileId == null && profiles.isNotEmpty) {
-          _selectedProfileId = profiles.first.id;
-        }
-        final AnalysisProfile? selected = _activeProfile;
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: <Widget>[
-            Text('AI 对弈', style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<int>(
-              initialValue: _boardSize,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                labelText: '棋盘尺寸',
-              ),
-              items: _boardSizes.map((int s) {
-                return DropdownMenuItem<int>(value: s, child: Text('$s x $s'));
-              }).toList(),
-              onChanged: (int? size) {
-                if (size != null) {
-                  setState(() {
-                    _boardSize = size;
-                  });
-                }
-              },
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: selected?.id,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                labelText: '难度',
-              ),
-              items: profiles.map((AnalysisProfile p) {
-                return DropdownMenuItem<String>(value: p.id, child: Text(p.name));
-              }).toList(),
-              onChanged: (String? id) {
-                setState(() {
-                  _selectedProfileId = id;
-                });
-              },
-            ),
-            const SizedBox(height: 12),
-            Slider(
-              value: _handicap.toDouble(),
-              max: 9,
-              divisions: 9,
-              label: '$_handicap',
-              onChanged: (double value) {
-                setState(() {
-                  _handicap = value.toInt();
-                });
-              },
-            ),
-            Text('让子: $_handicap'),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('猜先（随机先后）'),
-              subtitle: const Text('开启后随机分配你执黑或执白'),
-              value: _guessFirst,
-              onChanged: (bool value) {
-                setState(() {
-                  _guessFirst = value;
-                });
-              },
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _checkingEngine ? null : _checkEngine,
-              icon: _checkingEngine
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.memory),
-              label: const Text('检测引擎连通性'),
-            ),
-            if (_engineStatus != null) ...<Widget>[
-              const SizedBox(height: 8),
-              Text(_engineStatus!),
-            ],
-            if (_engineDiagnostics != null &&
-                _engineDiagnostics!.isNotEmpty) ...<Widget>[
-              const SizedBox(height: 8),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.black12),
-                  borderRadius: BorderRadius.circular(8),
-                  color: Colors.black.withValues(alpha: 0.03),
+      builder:
+          (BuildContext context, AsyncSnapshot<List<AnalysisProfile>> snap) {
+            if (snap.connectionState != ConnectionState.done) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snap.hasError) {
+              return Center(child: Text('加载难度配置失败: ${snap.error}'));
+            }
+            final List<AnalysisProfile> profiles =
+                snap.data ?? <AnalysisProfile>[];
+            _profilesCache
+              ..clear()
+              ..addAll(profiles);
+            if (_selectedProfileId == null && profiles.isNotEmpty) {
+              _selectedProfileId = profiles.first.id;
+            }
+            final AnalysisProfile? selected = _activeProfile;
+            return ListView(
+              padding: const EdgeInsets.all(16),
+              children: <Widget>[
+                Text('AI 对弈', style: Theme.of(context).textTheme.headlineSmall),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<int>(
+                  initialValue: _boardSize,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    labelText: '棋盘尺寸',
+                  ),
+                  items: _boardSizes.map((int s) {
+                    return DropdownMenuItem<int>(
+                      value: s,
+                      child: Text('$s x $s'),
+                    );
+                  }).toList(),
+                  onChanged: (int? size) {
+                    if (size != null) {
+                      setState(() {
+                        _boardSize = size;
+                      });
+                    }
+                  },
                 ),
-                child: SelectableText(
-                  _engineDiagnostics!,
-                  style: const TextStyle(fontSize: 12),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: selected?.id,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    labelText: '难度',
+                  ),
+                  items: profiles.map((AnalysisProfile p) {
+                    return DropdownMenuItem<String>(
+                      value: p.id,
+                      child: Text(p.name),
+                    );
+                  }).toList(),
+                  onChanged: (String? id) {
+                    setState(() {
+                      _selectedProfileId = id;
+                    });
+                  },
                 ),
-              ),
-            ],
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: selected == null ? null : () => _startBattle(selected),
-              icon: const Icon(Icons.play_arrow),
-              label: const Text('开始对弈'),
-            ),
-            if (selected != null) ...<Widget>[
-              const SizedBox(height: 16),
-              Card(
-                child: ListTile(
-                  title: Text(selected.name),
-                  subtitle: Text(selected.description),
-                  trailing: Text('Visits ${selected.maxVisits}'),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedRulesetId,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    labelText: '规则',
+                  ),
+                  items: kRulePresets
+                      .map(
+                        (RulePreset p) => DropdownMenuItem<String>(
+                          value: p.id,
+                          child: Text('${p.label} (KM ${p.defaultKomi})'),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (String? value) {
+                    if (value == null) {
+                      return;
+                    }
+                    setState(() {
+                      _selectedRulesetId = value;
+                    });
+                  },
                 ),
-              ),
-            ],
-          ],
-        );
-      },
+                const SizedBox(height: 12),
+                Slider(
+                  value: _handicap.toDouble(),
+                  max: 9,
+                  divisions: 9,
+                  label: '$_handicap',
+                  onChanged: (double value) {
+                    setState(() {
+                      _handicap = value.toInt();
+                    });
+                  },
+                ),
+                Text('AI让子给你: $_handicap'),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('猜先（随机先后）'),
+                  subtitle: Text(
+                    _handicap > 0 ? '让子局固定你执黑（猜先不生效）' : '开启后随机分配你执黑或执白',
+                  ),
+                  value: _guessFirst,
+                  onChanged: _handicap > 0
+                      ? null
+                      : (bool value) {
+                          setState(() {
+                            _guessFirst = value;
+                          });
+                        },
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: _checkingEngine ? null : _checkEngine,
+                  icon: _checkingEngine
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.memory),
+                  label: const Text('检测引擎连通性'),
+                ),
+                if (_engineStatus != null) ...<Widget>[
+                  const SizedBox(height: 8),
+                  Text(_engineStatus!),
+                ],
+                if (_engineDiagnostics != null &&
+                    _engineDiagnostics!.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.black12),
+                      borderRadius: BorderRadius.circular(8),
+                      color: Colors.black.withValues(alpha: 0.03),
+                    ),
+                    child: SelectableText(
+                      _engineDiagnostics!,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: selected == null
+                      ? null
+                      : () => _startBattle(selected),
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('开始对弈'),
+                ),
+                if (selected != null) ...<Widget>[
+                  const SizedBox(height: 16),
+                  Card(
+                    child: ListTile(
+                      title: Text(selected.name),
+                      subtitle: Text(selected.description),
+                      trailing: Text('Visits ${selected.maxVisits}'),
+                    ),
+                  ),
+                ],
+              ],
+            );
+          },
     );
   }
 }
@@ -261,6 +309,7 @@ class _AIBattlePage extends StatefulWidget {
     required this.boardSize,
     required this.handicap,
     required this.randomFirst,
+    required this.rules,
   });
 
   final KatagoAdapter adapter;
@@ -268,22 +317,40 @@ class _AIBattlePage extends StatefulWidget {
   final int boardSize;
   final int handicap;
   final bool randomFirst;
+  final GameRules rules;
 
   @override
   State<_AIBattlePage> createState() => _AIBattlePageState();
 }
 
 class _AIBattlePageState extends State<_AIBattlePage> {
+  final GameAnalysisService _analysisService = const GameAnalysisService();
+  final GameRecordRepository _recordRepository = GameRecordRepository();
+  String? _recordId;
+  int? _recordCreatedAtMs;
+  late GameRules _rules;
   GoGameState? _game;
   final List<GoGameState> _history = <GoGameState>[];
   List<GoPoint> _handicapStones = <GoPoint>[];
   GoScore? _finalScore;
+  String? _resignResultText;
   GoPoint? _pendingPoint;
   GoStone _playerStone = GoStone.black;
   GoStone _aiStone = GoStone.white;
   bool _aiThinking = false;
+  bool _restoring = true;
   String _status = '准备中...';
   double? _blackWinrate;
+  final Map<int, double> _winrateByTurn = <int, double>{};
+
+  double? get _playerWinrate {
+    if (_blackWinrate == null) {
+      return null;
+    }
+    return _playerStone == GoStone.black
+        ? _blackWinrate
+        : (1.0 - _blackWinrate!);
+  }
 
   Duration _blackBase = Duration.zero;
   Duration _whiteBase = Duration.zero;
@@ -292,16 +359,21 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   Timer? _ticker;
 
   int _timeoutBudgetMs() {
-    if (widget.profile.id == 'advanced') {
+    if (widget.profile.maxVisits >= 60 || widget.profile.id == 'master') {
       return max(120000, widget.profile.thinkingTimeMs * 24);
     }
-    return max(12000, widget.profile.thinkingTimeMs * 8);
+    // Mid/low tiers still need enough budget on mobile CPU for higher visits.
+    return max(
+      12000,
+      max(widget.profile.thinkingTimeMs * 10, widget.profile.maxVisits * 900),
+    );
   }
 
   @override
   void initState() {
     super.initState();
-    _initializeGame();
+    _rules = widget.rules;
+    unawaited(_bootstrapSession());
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
         setState(() {});
@@ -316,10 +388,33 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     super.dispose();
   }
 
+  Future<void> _bootstrapSession() async {
+    final bool restored = await _restoreSession();
+    if (!restored) {
+      _initializeGame();
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _restoring = false;
+    });
+    if (_game != null && !_isGameOver && _game!.toPlay == _aiStone) {
+      await _aiMove();
+    }
+  }
+
   void _initializeGame() {
-    _playerStone = widget.randomFirst && Random().nextBool()
-        ? GoStone.white
-        : GoStone.black;
+    _recordId = null;
+    _recordCreatedAtMs = null;
+    if (widget.handicap > 0) {
+      // Handicap means AI gives stones to player, so player is fixed to black.
+      _playerStone = GoStone.black;
+    } else {
+      _playerStone = widget.randomFirst && Random().nextBool()
+          ? GoStone.white
+          : GoStone.black;
+    }
     _aiStone = _playerStone.opposite();
 
     final List<GoPoint> handicap = _buildHandicapPoints(
@@ -346,15 +441,20 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     _game = initial;
     _handicapStones = handicap;
     _finalScore = null;
+    _resignResultText = null;
     _pendingPoint = null;
     _blackWinrate = null;
+    _winrateByTurn.clear();
     _blackBase = Duration.zero;
     _whiteBase = Duration.zero;
     _activeClockStone = null;
     _activeClockStartedAt = null;
     _startClockFor(toPlay);
-    _status =
-        '你执${_playerStone == GoStone.black ? '黑' : '白'}，${toPlay == _playerStone ? '请落子' : 'AI先行'}';
+    _status = widget.handicap > 0
+        ? 'AI让子${widget.handicap}，你执黑，${toPlay == _playerStone ? '请落子' : 'AI先行'}'
+        : '你执${_playerStone == GoStone.black ? '黑' : '白'}，${toPlay == _playerStone ? '请落子' : 'AI先行'}';
+
+    unawaited(_persistSession());
 
     if (toPlay == _aiStone) {
       unawaited(_aiMove());
@@ -396,7 +496,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   }
 
   Future<void> _onBoardTap(GoPoint point) async {
-    if (_game == null || _aiThinking || _finalScore != null) {
+    if (_game == null || _aiThinking || _isGameOver) {
       return;
     }
     if (_game!.toPlay != _playerStone) {
@@ -427,11 +527,12 @@ class _AIBattlePageState extends State<_AIBattlePage> {
       _pendingPoint = null;
       _status = '你已落子，等待AI应手...';
     });
+    unawaited(_persistSession());
     await _aiMove();
   }
 
   Future<void> _playerPass() async {
-    if (_game == null || _aiThinking || _finalScore != null) {
+    if (_game == null || _aiThinking || _isGameOver) {
       return;
     }
     if (_game!.toPlay != _playerStone) {
@@ -445,6 +546,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
       _pendingPoint = null;
       _status = '你选择了 pass';
     });
+    unawaited(_persistSession());
     _maybeFinishGame();
     if (_finalScore == null) {
       await _aiMove();
@@ -452,14 +554,15 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   }
 
   Future<void> _aiMove() async {
-    if (_game == null || _game!.toPlay != _aiStone || _finalScore != null) {
+    if (_game == null || _game!.toPlay != _aiStone || _isGameOver) {
       return;
     }
     setState(() {
       _aiThinking = true;
       _pendingPoint = null;
-      _status = widget.profile.id == 'advanced'
-          ? 'AI高阶思考中（可能较久）...'
+      _status =
+          (widget.profile.maxVisits >= 60 || widget.profile.id == 'master')
+          ? 'AI大师思考中（可能较久）...'
           : 'AI思考中...';
     });
     try {
@@ -484,20 +587,31 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                 ? StoneColor.black
                 : StoneColor.white,
           ),
-          rules: const GameRules(
-            ruleset: 'chinese',
-            komi: 7.5,
-            scoringRule: ScoringRule.area,
-            koRule: KoRule.situationalSuperko,
-          ),
+          rules: _rules,
           profile: widget.profile,
           timeoutMs: _timeoutBudgetMs(),
         ),
       );
 
-      _blackWinrate = _aiStone == GoStone.black
-          ? analyzed.winrate
-          : (1.0 - analyzed.winrate);
+      // Normalize BLACK-perspective winrate with scoreLead consistency check.
+      _blackWinrate = _normalizeBlackWinrate(
+        analyzed.winrate,
+        analyzed.scoreLead,
+      );
+      _winrateByTurn[_game!.moves.length] = _blackWinrate!;
+
+      final double aiWinrate = _aiStone == GoStone.black
+          ? _blackWinrate!
+          : (1.0 - _blackWinrate!);
+      if (_shouldAiResign(aiWinrate)) {
+        setState(() {
+          _freezeActiveClock();
+          _resignResultText = 'AI认输，你胜';
+          _status = _resignResultText!;
+        });
+        unawaited(_persistSession());
+        return;
+      }
 
       final GoPoint? aiPoint = _gtpToPoint(analyzed.bestMove, widget.boardSize);
       GoGameState next = _game!;
@@ -505,7 +619,9 @@ class _AIBattlePageState extends State<_AIBattlePage> {
         try {
           next = next.play(GoMove(player: _aiStone, point: aiPoint));
         } catch (_) {
-          final List<GoPoint> legal = next.legalMovesForCurrentPlayer().toList();
+          final List<GoPoint> legal = next
+              .legalMovesForCurrentPlayer()
+              .toList();
           if (legal.isNotEmpty) {
             final GoPoint fallback = legal[Random().nextInt(legal.length)];
             next = next.play(GoMove(player: _aiStone, point: fallback));
@@ -521,11 +637,13 @@ class _AIBattlePageState extends State<_AIBattlePage> {
         _applyGame(next);
         _status = 'AI落子完成，轮到你';
       });
+      unawaited(_persistSession());
       _maybeFinishGame();
     } on PlatformException catch (e) {
       final String details = e.details?.toString() ?? '';
       setState(() {
-        _status = 'AI分析失败: [${e.code}] ${e.message ?? ''} ${details.isEmpty ? '' : '| $details'}';
+        _status =
+            'AI分析失败: [${e.code}] ${e.message ?? ''} ${details.isEmpty ? '' : '| $details'}';
       });
     } finally {
       if (mounted) {
@@ -547,9 +665,10 @@ class _AIBattlePageState extends State<_AIBattlePage> {
       return;
     }
     if (_game!.consecutivePasses >= 2) {
-      _finalScore = _game!.scoreChineseArea(komi: 7.5);
+      _finalScore = _game!.scoreByRules(_rules);
       _freezeActiveClock();
       _status = '终局: ${_finalScore!.winnerText()}';
+      unawaited(_persistSession());
     }
   }
 
@@ -567,9 +686,11 @@ class _AIBattlePageState extends State<_AIBattlePage> {
       _game = _history.last;
       _pendingPoint = null;
       _finalScore = null;
+      _resignResultText = null;
       _status = '已悔棋';
       _startClockFor(_game!.toPlay);
     });
+    unawaited(_persistSession());
   }
 
   GoPoint? _lastMovePoint() {
@@ -578,6 +699,46 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     }
     for (int i = _game!.moves.length - 1; i >= 0; i--) {
       final GoMove move = _game!.moves[i];
+      if (!move.isPass && move.point != null) {
+        return move.point;
+      }
+    }
+    return null;
+  }
+
+  GoGameState _initialStateForReview() {
+    final List<List<GoStone?>> board = List<List<GoStone?>>.generate(
+      widget.boardSize,
+      (_) => List<GoStone?>.filled(widget.boardSize, null),
+    );
+    for (final GoPoint p in _handicapStones) {
+      board[p.y][p.x] = GoStone.black;
+    }
+    final GoStone toPlay = _handicapStones.isEmpty
+        ? GoStone.black
+        : GoStone.white;
+    return GoGameState(
+      boardSize: widget.boardSize,
+      board: board,
+      toPlay: toPlay,
+    );
+  }
+
+  GoGameState _stateAtTurn(int turn) {
+    GoGameState state = _initialStateForReview();
+    final List<GoMove> moves = _game?.moves ?? <GoMove>[];
+    final int safeTurn = turn.clamp(0, moves.length);
+    for (int i = 0; i < safeTurn; i++) {
+      state = state.play(moves[i]);
+    }
+    return state;
+  }
+
+  GoPoint? _lastMovePointAtTurn(int turn) {
+    final List<GoMove> moves = _game?.moves ?? <GoMove>[];
+    final int safeTurn = turn.clamp(0, moves.length);
+    for (int i = safeTurn - 1; i >= 0; i--) {
+      final GoMove move = moves[i];
       if (!move.isPass && move.point != null) {
         return move.point;
       }
@@ -628,10 +789,403 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     return ordered.take(handicap.clamp(0, ordered.length)).toList();
   }
 
+  bool get _isGameOver => _finalScore != null || _resignResultText != null;
+
+  bool _shouldAiResign(double aiWinrate) {
+    final int moveCount = _game?.moves.length ?? 0;
+    final int threshold = switch (widget.boardSize) {
+      9 => 35,
+      13 => 70,
+      _ => 120,
+    };
+    return moveCount >= threshold && aiWinrate < 0.05;
+  }
+
+  double _normalizeBlackWinrate(double rawWinrate, double scoreLead) {
+    final double clamped = rawWinrate.clamp(0.0, 1.0);
+    // If winrate direction conflicts with scoreLead sign, flip it.
+    // scoreLead > 0 generally means black is ahead; < 0 means white is ahead.
+    if (scoreLead > 0.5 && clamped < 0.5) {
+      return 1.0 - clamped;
+    }
+    if (scoreLead < -0.5 && clamped > 0.5) {
+      return 1.0 - clamped;
+    }
+    return clamped;
+  }
+
+  Future<void> _playerResign() async {
+    if (_isGameOver || _aiThinking) {
+      return;
+    }
+    setState(() {
+      _freezeActiveClock();
+      _resignResultText = '你认输，AI胜';
+      _status = _resignResultText!;
+    });
+    await _persistSession();
+  }
+
+  String _toSgf() {
+    final StringBuffer sb = StringBuffer();
+    final String result =
+        _resignResultText ??
+        (_finalScore != null ? _finalScore!.winnerText() : '?');
+    sb.write('(;GM[1]FF[4]');
+    sb.write('SZ[${widget.boardSize}]');
+    sb.write('KM[${_rules.komi}]');
+    sb.write('RU[${_rules.ruleset}]');
+    sb.write('PB[Player]');
+    sb.write('PW[MasterGo AI]');
+    if (widget.handicap > 0) {
+      sb.write('HA[${widget.handicap}]');
+    }
+    sb.write('RE[$result]');
+    for (final GoMove move in _game?.moves ?? <GoMove>[]) {
+      final String color = move.player == GoStone.black ? 'B' : 'W';
+      if (move.isPass || move.point == null) {
+        sb.write(';$color[]');
+      } else {
+        sb.write(';$color[${_toSgfCoord(move.point!)}]');
+      }
+    }
+    sb.write(')');
+    return sb.toString();
+  }
+
+  String _toSgfCoord(GoPoint p) {
+    const String letters = 'abcdefghijklmnopqrstuvwxyz';
+    return '${letters[p.x]}${letters[p.y]}';
+  }
+
+  Future<void> _persistSession() async {
+    final GoGameState? game = _game;
+    if (game == null) {
+      return;
+    }
+    final int now = DateTime.now().millisecondsSinceEpoch;
+    final int createdAt = _recordCreatedAtMs ?? now;
+    final Map<String, dynamic> data = <String, dynamic>{
+      'boardSize': widget.boardSize,
+      'handicap': widget.handicap,
+      'profileId': widget.profile.id,
+      'profileName': widget.profile.name,
+      'playerStone': _playerStone.name,
+      'aiStone': _aiStone.name,
+      'moves': game.moves.map((GoMove m) {
+        return <String, dynamic>{
+          'player': m.player.name,
+          'isPass': m.isPass,
+          'x': m.point?.x,
+          'y': m.point?.y,
+        };
+      }).toList(),
+      'winrateByTurn': _winrateByTurn.map(
+        (int k, double v) => MapEntry<String, dynamic>(k.toString(), v),
+      ),
+      'status': _status,
+      'finalScore': _finalScore == null
+          ? null
+          : <String, dynamic>{
+              'blackStones': _finalScore!.blackStones,
+              'whiteStones': _finalScore!.whiteStones,
+              'blackTerritory': _finalScore!.blackTerritory,
+              'whiteTerritory': _finalScore!.whiteTerritory,
+              'blackArea': _finalScore!.blackArea,
+              'whiteArea': _finalScore!.whiteArea,
+              'komi': _finalScore!.komi,
+            },
+      'resignResult': _resignResultText,
+      'blackMs': _clockValue(GoStone.black).inMilliseconds,
+      'whiteMs': _clockValue(GoStone.white).inMilliseconds,
+      'ruleset': _rules.ruleset,
+      'komi': _rules.komi,
+      'sgf': _toSgf(),
+      'updatedAt': DateTime.now().millisecondsSinceEpoch,
+    };
+    final String id = _recordId ?? _recordRepository.newId(prefix: 'battle');
+    _recordId = id;
+    final GameRecord record = GameRecord(
+      id: id,
+      source: 'battle_local',
+      title: 'AI对弈 ${widget.boardSize}路 ${widget.profile.name}',
+      boardSize: widget.boardSize,
+      ruleset: _rules.ruleset,
+      komi: _rules.komi,
+      sgf: _toSgf(),
+      status: _isGameOver ? 'finished' : 'active',
+      sessionJson: jsonEncode(data),
+      winrateJson: jsonEncode(
+        _winrateByTurn.map(
+          (int k, double v) => MapEntry<String, dynamic>(k.toString(), v),
+        ),
+      ),
+      createdAtMs: createdAt,
+      updatedAtMs: now,
+    );
+    _recordCreatedAtMs = createdAt;
+    await _recordRepository.upsert(record);
+  }
+
+  Future<bool> _restoreSession() async {
+    final GameRecord? latest = await _recordRepository.loadLatestBySource(
+      'battle_local',
+    );
+    if (latest == null || latest.sessionJson.isEmpty) {
+      return false;
+    }
+    try {
+      _recordId = latest.id;
+      _recordCreatedAtMs = latest.createdAtMs;
+      final Map<String, dynamic> data =
+          jsonDecode(latest.sessionJson) as Map<String, dynamic>;
+      final String restoredRuleset =
+          (data['ruleset'] as String?) ?? latest.ruleset;
+      final double restoredKomi =
+          (data['komi'] as num?)?.toDouble() ?? latest.komi;
+      final RulePreset restoredPreset = rulePresetFromString(restoredRuleset);
+      _rules = restoredPreset.toGameRules(komi: restoredKomi);
+      final int boardSize = (data['boardSize'] as num).toInt();
+      final int handicap = (data['handicap'] as num).toInt();
+      _playerStone = (data['playerStone'] as String) == 'white'
+          ? GoStone.white
+          : GoStone.black;
+      _aiStone = _playerStone.opposite();
+
+      final List<List<GoStone?>> board = List<List<GoStone?>>.generate(
+        boardSize,
+        (_) => List<GoStone?>.filled(boardSize, null),
+      );
+      final List<GoPoint> handicapStones = _buildHandicapPoints(
+        boardSize,
+        handicap,
+      );
+      for (final GoPoint p in handicapStones) {
+        board[p.y][p.x] = GoStone.black;
+      }
+      final GoStone toPlay = handicapStones.isEmpty
+          ? GoStone.black
+          : GoStone.white;
+      GoGameState state = GoGameState(
+        boardSize: boardSize,
+        board: board,
+        toPlay: toPlay,
+      );
+      _history
+        ..clear()
+        ..add(state);
+
+      final List<dynamic> moves =
+          (data['moves'] as List<dynamic>? ?? <dynamic>[]);
+      for (final dynamic rawMove in moves) {
+        final Map<String, dynamic> m = rawMove as Map<String, dynamic>;
+        final GoStone player = (m['player'] as String) == 'white'
+            ? GoStone.white
+            : GoStone.black;
+        final bool isPass = m['isPass'] as bool? ?? false;
+        final int? x = (m['x'] as num?)?.toInt();
+        final int? y = (m['y'] as num?)?.toInt();
+        final GoMove move = isPass || x == null || y == null
+            ? GoMove(player: player, isPass: true)
+            : GoMove(player: player, point: GoPoint(x, y));
+        state = state.play(move);
+        _history.add(state);
+      }
+
+      _game = state;
+      _handicapStones = handicapStones;
+      _pendingPoint = null;
+      _blackWinrate = null;
+      _winrateByTurn
+        ..clear()
+        ..addAll(
+          ((data['winrateByTurn'] as Map<String, dynamic>? ??
+                  <String, dynamic>{})
+              .map(
+                (String k, dynamic v) =>
+                    MapEntry<int, double>(int.parse(k), (v as num).toDouble()),
+              )),
+        );
+      _status = data['status'] as String? ?? '已恢复上局';
+      _resignResultText = data['resignResult'] as String?;
+
+      final Map<String, dynamic>? score =
+          data['finalScore'] as Map<String, dynamic>?;
+      _finalScore = score == null
+          ? null
+          : GoScore(
+              blackStones: (score['blackStones'] as num).toInt(),
+              whiteStones: (score['whiteStones'] as num).toInt(),
+              blackTerritory: (score['blackTerritory'] as num).toInt(),
+              whiteTerritory: (score['whiteTerritory'] as num).toInt(),
+              komi: (score['komi'] as num).toDouble(),
+              blackArea: (score['blackArea'] as num).toDouble(),
+              whiteArea: (score['whiteArea'] as num).toDouble(),
+            );
+
+      _blackBase = Duration(
+        milliseconds: (data['blackMs'] as num?)?.toInt() ?? 0,
+      );
+      _whiteBase = Duration(
+        milliseconds: (data['whiteMs'] as num?)?.toInt() ?? 0,
+      );
+      _activeClockStone = null;
+      _activeClockStartedAt = null;
+      if (!_isGameOver) {
+        _startClockFor(state.toPlay);
+      } else {
+        _freezeActiveClock();
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  List<String> _buildHints({required bool good}) {
+    final List<MoveHint> hints = _analysisService.buildHints(
+      _winrateByTurn,
+      playerStone: _playerStone,
+      blunderThreshold: 0.08,
+      brilliantEpsilon: 0.0001,
+    );
+    return hints
+        .where(
+          (MoveHint h) =>
+              good ? h.kind == HintKind.brilliant : h.kind == HintKind.blunder,
+        )
+        .map(
+          (MoveHint h) =>
+              '第${h.turn}手后玩家胜率 ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
+        )
+        .toList();
+  }
+
+  void _showReviewSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (BuildContext context) {
+        final List<String> good = _buildHints(good: true);
+        final List<String> bad = _buildHints(good: false);
+        final List<GoMove> moves = _game?.moves ?? <GoMove>[];
+        int turn = moves.length;
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setSheetState) {
+            return DraggableScrollableSheet(
+              expand: false,
+              initialChildSize: 0.92,
+              maxChildSize: 0.96,
+              builder: (_, ScrollController controller) {
+                final GoGameState state = _stateAtTurn(turn);
+                final GoPoint? lastPoint = _lastMovePointAtTurn(turn);
+                return ListView(
+                  controller: controller,
+                  padding: const EdgeInsets.all(12),
+                  children: <Widget>[
+                    Text('复盘', style: Theme.of(context).textTheme.titleLarge),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 320,
+                      child: GoBoardWidget(
+                        boardSize: state.boardSize,
+                        board: state.board,
+                        lastMovePoint: lastPoint,
+                      ),
+                    ),
+                    Row(
+                      children: <Widget>[
+                        IconButton(
+                          onPressed: turn > 0
+                              ? () => setSheetState(() {
+                                  turn -= 1;
+                                })
+                              : null,
+                          icon: const Icon(Icons.chevron_left),
+                        ),
+                        Expanded(child: Text('当前手数: $turn/${moves.length}')),
+                        IconButton(
+                          onPressed: turn < moves.length
+                              ? () => setSheetState(() {
+                                  turn += 1;
+                                })
+                              : null,
+                          icon: const Icon(Icons.chevron_right),
+                        ),
+                      ],
+                    ),
+                    Slider(
+                      value: turn.toDouble(),
+                      min: 0,
+                      max: max(1, moves.length).toDouble(),
+                      divisions: max(1, moves.length),
+                      label: '$turn',
+                      onChanged: (double value) {
+                        setSheetState(() {
+                          turn = value.round().clamp(0, moves.length);
+                        });
+                      },
+                    ),
+                    SizedBox(
+                      height: 180,
+                      child: WinrateChart(
+                        winrates: _winrateByTurn,
+                        maxTurn: max((_game?.moves.length ?? 1), 1),
+                      ),
+                    ),
+                    if (_winrateByTurn.containsKey(turn))
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(() {
+                          final double black = _winrateByTurn[turn]!;
+                          final double player = _playerStone == GoStone.black
+                              ? black
+                              : (1.0 - black);
+                          return '第$turn手玩家胜率: ${(player * 100).toStringAsFixed(1)}%';
+                        }()),
+                      ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '妙手提示',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    if (good.isEmpty)
+                      const Text('暂无明显妙手')
+                    else
+                      ...good.map(Text.new),
+                    const SizedBox(height: 8),
+                    Text(
+                      '恶手提示',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    if (bad.isEmpty)
+                      const Text('暂无明显恶手')
+                    else
+                      ...bad.map(Text.new),
+                    const SizedBox(height: 8),
+                    Text(
+                      '自动记录 SGF（可复制）',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    SelectableText(
+                      _toSgf(),
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final GoGameState? game = _game;
-    final double? blackWin = _blackWinrate;
+    final double? playerWin = _playerWinrate;
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 8,
@@ -639,14 +1193,17 @@ class _AIBattlePageState extends State<_AIBattlePage> {
           scrollDirection: Axis.horizontal,
           child: Text(
             '难度:${widget.profile.name}  让子:${widget.handicap}  '
-            '黑胜率:${blackWin == null ? '--' : '${(blackWin * 100).toStringAsFixed(1)}%'}  '
+            '规则:${rulePresetFromString(_rules.ruleset).label}  '
+            '玩家胜率:${playerWin == null ? '--' : '${(playerWin * 100).toStringAsFixed(1)}%'}  '
             '黑:${_fmtDuration(_clockValue(GoStone.black))}  '
             '白:${_fmtDuration(_clockValue(GoStone.white))}',
             style: const TextStyle(fontSize: 13),
           ),
         ),
       ),
-      body: game == null
+      body: _restoring
+          ? const Center(child: CircularProgressIndicator())
+          : game == null
           ? const Center(child: CircularProgressIndicator())
           : SafeArea(
               child: Column(
@@ -694,12 +1251,17 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                             '终局结果: ${_finalScore!.winnerText()}（黑地${_finalScore!.blackTerritory}，白地${_finalScore!.whiteTerritory}）',
                           ),
                         ],
+                        if (_resignResultText != null) ...<Widget>[
+                          const SizedBox(height: 4),
+                          Text('终局结果: $_resignResultText'),
+                        ],
                         const SizedBox(height: 8),
                         Wrap(
                           spacing: 8,
                           children: <Widget>[
                             OutlinedButton(
-                              onPressed: (game.toPlay == _playerStone &&
+                              onPressed:
+                                  (game.toPlay == _playerStone &&
                                       !_aiThinking &&
                                       _finalScore == null)
                                   ? _playerPass
@@ -711,6 +1273,16 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                                   ? _undo
                                   : null,
                               child: const Text('悔棋'),
+                            ),
+                            OutlinedButton(
+                              onPressed: (!_isGameOver && !_aiThinking)
+                                  ? _playerResign
+                                  : null,
+                              child: const Text('认输'),
+                            ),
+                            OutlinedButton(
+                              onPressed: _isGameOver ? _showReviewSheet : null,
+                              child: const Text('复盘'),
                             ),
                             OutlinedButton(
                               onPressed: _aiThinking

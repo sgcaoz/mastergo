@@ -161,15 +161,15 @@ class _GoBoardPainter extends CustomPainter {
       );
       _drawDashedLine(
         canvas,
-        Offset(padding, c.dy),
-        Offset(size.width - padding, c.dy),
-        const Color(0xAA1F4E79),
+        Offset(0, c.dy),
+        Offset(size.width, c.dy),
+        const Color(0xCC0D47A1),
       );
       _drawDashedLine(
         canvas,
-        Offset(c.dx, padding),
-        Offset(c.dx, size.height - padding),
-        const Color(0xAA1F4E79),
+        Offset(c.dx, 0),
+        Offset(c.dx, size.height),
+        const Color(0xCC0D47A1),
       );
       final Paint ghostPaint = Paint()
         ..color = tentativeStone == GoStone.black
