@@ -29,6 +29,7 @@ class GameAnalysisService {
     required double komi,
     required AnalysisProfile profile,
     List<String> initialStones = const <String>[],
+    int? timeoutMs,
     void Function(int turn, int total)? onProgress,
   }) async {
     await adapter.ensureStarted();
@@ -46,6 +47,7 @@ class GameAnalysisService {
           ),
           rules: rules,
           profile: profile,
+          timeoutMs: timeoutMs,
         ),
       );
       winrates[turn] = res.winrate;
@@ -57,8 +59,8 @@ class GameAnalysisService {
   List<MoveHint> buildHints(
     Map<int, double> blackWinrateByTurn, {
     required GoStone playerStone,
-    double blunderThreshold = 0.08,
-    double brilliantEpsilon = 0.0001,
+    double blunderThreshold = 0.20,
+    double brilliantEpsilon = 0.05,
   }) {
     final List<int> turns = blackWinrateByTurn.keys.toList()..sort();
     final List<MoveHint> hints = <MoveHint>[];

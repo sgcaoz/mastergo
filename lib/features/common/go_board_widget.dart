@@ -13,6 +13,7 @@ class GoBoardWidget extends StatelessWidget {
     this.lastMovePoint,
     this.tentativePoint,
     this.tentativeStone,
+    this.hintPoints = const <GoPoint>[],
   });
 
   final int boardSize;
@@ -22,6 +23,7 @@ class GoBoardWidget extends StatelessWidget {
   final GoPoint? lastMovePoint;
   final GoPoint? tentativePoint;
   final GoStone? tentativeStone;
+  final List<GoPoint> hintPoints;
 
   @override
   Widget build(BuildContext context) {
@@ -55,6 +57,7 @@ class GoBoardWidget extends StatelessWidget {
                   lastMovePoint: lastMovePoint,
                   tentativePoint: tentativePoint,
                   tentativeStone: tentativeStone,
+                  hintPoints: hintPoints,
                 ),
               ),
             ),
@@ -87,6 +90,7 @@ class _GoBoardPainter extends CustomPainter {
     required this.lastMovePoint,
     required this.tentativePoint,
     required this.tentativeStone,
+    required this.hintPoints,
   });
 
   final int boardSize;
@@ -95,6 +99,7 @@ class _GoBoardPainter extends CustomPainter {
   final GoPoint? lastMovePoint;
   final GoPoint? tentativePoint;
   final GoStone? tentativeStone;
+  final List<GoPoint> hintPoints;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -205,6 +210,28 @@ class _GoBoardPainter extends CustomPainter {
           ..strokeWidth = 1.2,
       );
     }
+
+    for (final GoPoint p in hintPoints) {
+      final Offset c = Offset(padding + p.x * spacing, padding + p.y * spacing);
+      canvas.drawCircle(
+        c,
+        spacing * 0.34,
+        Paint()..color = const Color(0x6643A047),
+      );
+      canvas.drawCircle(
+        c,
+        spacing * 0.28,
+        Paint()
+          ..color = const Color(0xFFFFC107)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.6,
+      );
+      canvas.drawCircle(
+        c,
+        spacing * 0.1,
+        Paint()..color = const Color(0xFFFFC107),
+      );
+    }
   }
 
   List<GoPoint> _starPoints() {
@@ -234,12 +261,7 @@ class _GoBoardPainter extends CustomPainter {
     return points;
   }
 
-  void _drawDashedLine(
-    Canvas canvas,
-    Offset start,
-    Offset end,
-    Color color,
-  ) {
+  void _drawDashedLine(Canvas canvas, Offset start, Offset end, Color color) {
     final Paint paint = Paint()
       ..color = color
       ..strokeWidth = 1;
@@ -266,6 +288,7 @@ class _GoBoardPainter extends CustomPainter {
         oldDelegate.boardSize != boardSize ||
         oldDelegate.lastMovePoint != lastMovePoint ||
         oldDelegate.tentativePoint != tentativePoint ||
-        oldDelegate.tentativeStone != tentativeStone;
+        oldDelegate.tentativeStone != tentativeStone ||
+        oldDelegate.hintPoints != hintPoints;
   }
 }

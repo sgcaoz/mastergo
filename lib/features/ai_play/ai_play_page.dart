@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer' as developer;
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -37,9 +36,6 @@ class _AIPlayPageState extends State<AIPlayPage> {
   bool _guessFirst = true;
   String _selectedRulesetId = 'chinese';
   String? _selectedProfileId;
-  String? _engineStatus;
-  String? _engineDiagnostics;
-  bool _checkingEngine = false;
 
   @override
   void dispose() {
@@ -61,51 +57,6 @@ class _AIPlayPageState extends State<AIPlayPage> {
 
   RulePreset get _activeRulePreset => rulePresetFromString(_selectedRulesetId);
 
-  Future<void> _checkEngine() async {
-    setState(() {
-      _checkingEngine = true;
-      _engineStatus = null;
-      _engineDiagnostics = null;
-    });
-    try {
-      await _katagoAdapter.ensureStarted();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _engineStatus = '引擎已连接，可开始对弈';
-        _engineDiagnostics = 'checkEngine: engine started + warmup passed';
-      });
-    } on PlatformException catch (e) {
-      if (!mounted) {
-        return;
-      }
-      final String formatted = _formatPlatformError(e);
-      setState(() {
-        _engineStatus = '引擎未就绪: $formatted';
-        _engineDiagnostics = formatted;
-      });
-      developer.log(
-        'KataGo checkEngine error: code=${e.code}, message=${e.message}, details=${e.details}',
-        name: 'mastergo.katago',
-      );
-    } catch (e) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _engineStatus = '引擎未就绪: $e';
-        _engineDiagnostics = e.toString();
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _checkingEngine = false;
-        });
-      }
-    }
-  }
-
   Future<void> _startBattle(AnalysisProfile profile) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -119,12 +70,6 @@ class _AIPlayPageState extends State<AIPlayPage> {
         ),
       ),
     );
-  }
-
-  String _formatPlatformError(PlatformException e) {
-    final String message = e.message ?? '';
-    final String details = e.details?.toString() ?? '';
-    return '[${e.code}] $message${details.isNotEmpty ? ' | $details' : ''}';
   }
 
   @override
@@ -245,39 +190,6 @@ class _AIPlayPageState extends State<AIPlayPage> {
                         },
                 ),
                 const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: _checkingEngine ? null : _checkEngine,
-                  icon: _checkingEngine
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.memory),
-                  label: const Text('检测引擎连通性'),
-                ),
-                if (_engineStatus != null) ...<Widget>[
-                  const SizedBox(height: 8),
-                  Text(_engineStatus!),
-                ],
-                if (_engineDiagnostics != null &&
-                    _engineDiagnostics!.isNotEmpty) ...<Widget>[
-                  const SizedBox(height: 8),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.black12),
-                      borderRadius: BorderRadius.circular(8),
-                      color: Colors.black.withValues(alpha: 0.03),
-                    ),
-                    child: SelectableText(
-                      _engineDiagnostics!,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
                 FilledButton.icon(
                   onPressed: selected == null
                       ? null
@@ -324,6 +236,7 @@ class _AIBattlePage extends StatefulWidget {
 }
 
 class _AIBattlePageState extends State<_AIBattlePage> {
+  static const bool _requireDoubleTapConfirm = true;
   final GameAnalysisService _analysisService = const GameAnalysisService();
   final GameRecordRepository _recordRepository = GameRecordRepository();
   String? _recordId;
@@ -337,6 +250,11 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   GoPoint? _pendingPoint;
   GoStone _playerStone = GoStone.black;
   GoStone _aiStone = GoStone.white;
+  bool _tryMode = false;
+  GoGameState? _tryBaseState;
+  String? _tryBaseStatus;
+  List<GoPoint> _hintPoints = <GoPoint>[];
+  String? _hintSummary;
   bool _aiThinking = false;
   bool _restoring = true;
   String _status = '准备中...';
@@ -359,20 +277,51 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   Timer? _ticker;
 
   int _timeoutBudgetMs() {
-    if (widget.profile.maxVisits >= 60 || widget.profile.id == 'master') {
-      return max(120000, widget.profile.thinkingTimeMs * 24);
+    return _timeoutBudgetMsForProfile(widget.profile);
+  }
+
+  int _timeoutBudgetMsForProfile(AnalysisProfile profile) {
+    if (profile.maxVisits >= 60 || profile.id == 'master') {
+      return max(120000, profile.thinkingTimeMs * 24);
     }
-    // Mid/low tiers still need enough budget on mobile CPU for higher visits.
     return max(
       12000,
-      max(widget.profile.thinkingTimeMs * 10, widget.profile.maxVisits * 900),
+      max(profile.thinkingTimeMs * 10, profile.maxVisits * 900),
+    );
+  }
+
+  AnalysisProfile _effectiveProfileForTurn(int moveCount) {
+    final AnalysisProfile p = widget.profile;
+    if (p.maxVisits < 30) {
+      return p;
+    }
+    int effectiveVisits = p.maxVisits;
+    if (moveCount < 6) {
+      effectiveVisits = min(effectiveVisits, 10);
+    } else if (moveCount < 14) {
+      effectiveVisits = min(effectiveVisits, 20);
+    } else if (moveCount < 24) {
+      effectiveVisits = min(effectiveVisits, 30);
+    }
+    if (effectiveVisits == p.maxVisits) {
+      return p;
+    }
+    return AnalysisProfile(
+      id: '${p.id}-opening-$effectiveVisits',
+      name: p.name,
+      description: p.description,
+      maxVisits: effectiveVisits,
+      thinkingTimeMs: min(p.thinkingTimeMs, 1000),
+      includeOwnership: p.includeOwnership,
     );
   }
 
   @override
   void initState() {
     super.initState();
-    _rules = widget.rules;
+    _rules = widget.handicap > 0
+        ? widget.rules.copyWith(komi: 0)
+        : widget.rules;
     unawaited(_bootstrapSession());
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
@@ -400,7 +349,11 @@ class _AIBattlePageState extends State<_AIBattlePage> {
       _restoring = false;
     });
     if (_game != null && !_isGameOver && _game!.toPlay == _aiStone) {
-      await _aiMove();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          unawaited(_aiMove());
+        }
+      });
     }
   }
 
@@ -445,20 +398,17 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     _pendingPoint = null;
     _blackWinrate = null;
     _winrateByTurn.clear();
+    _hintSummary = null;
     _blackBase = Duration.zero;
     _whiteBase = Duration.zero;
     _activeClockStone = null;
     _activeClockStartedAt = null;
     _startClockFor(toPlay);
     _status = widget.handicap > 0
-        ? 'AI让子${widget.handicap}，你执黑，${toPlay == _playerStone ? '请落子' : 'AI先行'}'
-        : '你执${_playerStone == GoStone.black ? '黑' : '白'}，${toPlay == _playerStone ? '请落子' : 'AI先行'}';
+        ? '${_handicapLabel}，贴目${_rules.komi.toStringAsFixed(1)}，你执黑，${toPlay == _playerStone ? '请落子' : 'AI先行'}'
+        : '$_handicapLabel，你执${_playerStone == GoStone.black ? '黑' : '白'}，${toPlay == _playerStone ? '请落子' : 'AI先行'}';
 
     unawaited(_persistSession());
-
-    if (toPlay == _aiStone) {
-      unawaited(_aiMove());
-    }
   }
 
   void _freezeActiveClock() {
@@ -499,6 +449,25 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     if (_game == null || _aiThinking || _isGameOver) {
       return;
     }
+    if (_tryMode) {
+      try {
+        final GoGameState next = _game!.play(
+          GoMove(player: _game!.toPlay, point: point),
+        );
+        setState(() {
+          _game = next;
+          _pendingPoint = null;
+          _hintPoints = <GoPoint>[];
+          _hintSummary = null;
+          _status = '试下中（黑白皆可走）';
+        });
+      } catch (_) {
+        setState(() {
+          _status = '试下非法落子';
+        });
+      }
+      return;
+    }
     if (_game!.toPlay != _playerStone) {
       return;
     }
@@ -513,7 +482,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
       return;
     }
 
-    if (_pendingPoint != point) {
+    if (_requireDoubleTapConfirm && _pendingPoint != point) {
       setState(() {
         _pendingPoint = point;
         _status = '再次点击同一位置确认落子';
@@ -525,14 +494,27 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     setState(() {
       _applyGame(next);
       _pendingPoint = null;
-      _status = '你已落子，等待AI应手...';
+      _hintPoints = <GoPoint>[];
+      _hintSummary = null;
+      _status = '你已落子，AI思考中...';
     });
     unawaited(_persistSession());
-    await _aiMove();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        unawaited(_aiMove());
+      }
+    });
   }
 
   Future<void> _playerPass() async {
     if (_game == null || _aiThinking || _isGameOver) {
+      return;
+    }
+    if (_tryMode) {
+      setState(() {
+        _game = _game!.play(GoMove(player: _game!.toPlay, isPass: true));
+        _status = '试下中：pass';
+      });
       return;
     }
     if (_game!.toPlay != _playerStone) {
@@ -554,16 +536,22 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   }
 
   Future<void> _aiMove() async {
-    if (_game == null || _game!.toPlay != _aiStone || _isGameOver) {
+    if (_game == null || _game!.toPlay != _aiStone || _isGameOver || _tryMode) {
       return;
     }
+    final AnalysisProfile effectiveProfile = _effectiveProfileForTurn(
+      _game!.moves.length,
+    );
     setState(() {
       _aiThinking = true;
       _pendingPoint = null;
-      _status =
-          (widget.profile.maxVisits >= 60 || widget.profile.id == 'master')
-          ? 'AI大师思考中（可能较久）...'
-          : 'AI思考中...';
+      _hintPoints = <GoPoint>[];
+      _hintSummary = null;
+      _status = effectiveProfile.maxVisits < widget.profile.maxVisits
+          ? 'AI布局快速思考中（V${effectiveProfile.maxVisits}）...'
+          : ((widget.profile.maxVisits >= 60 || widget.profile.id == 'master')
+                ? 'AI大师思考中（可能较久）...'
+                : 'AI思考中...');
     });
     try {
       final List<String> moveTokens = _game!.moves
@@ -588,8 +576,8 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                 : StoneColor.white,
           ),
           rules: _rules,
-          profile: widget.profile,
-          timeoutMs: _timeoutBudgetMs(),
+          profile: effectiveProfile,
+          timeoutMs: _timeoutBudgetMsForProfile(effectiveProfile),
         ),
       );
 
@@ -673,6 +661,9 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   }
 
   void _undo() {
+    if (_tryMode) {
+      return;
+    }
     if (_history.length <= 1 || _aiThinking) {
       return;
     }
@@ -791,6 +782,26 @@ class _AIBattlePageState extends State<_AIBattlePage> {
 
   bool get _isGameOver => _finalScore != null || _resignResultText != null;
 
+  String get _handicapLabel {
+    if (widget.handicap <= 0) {
+      return '猜先';
+    }
+    if (widget.handicap == 1) {
+      return '让先';
+    }
+    return '让${widget.handicap}子';
+  }
+
+  String get _ruleLabelForTopBar {
+    if (widget.handicap == 1) {
+      return '让先';
+    }
+    if (widget.handicap > 1) {
+      return '让子棋';
+    }
+    return rulePresetFromString(_rules.ruleset).label;
+  }
+
   bool _shouldAiResign(double aiWinrate) {
     final int moveCount = _game?.moves.length ?? 0;
     final int threshold = switch (widget.boardSize) {
@@ -839,6 +850,9 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     sb.write('PW[MasterGo AI]');
     if (widget.handicap > 0) {
       sb.write('HA[${widget.handicap}]');
+      for (final GoPoint p in _handicapStones) {
+        sb.write('AB[${_toSgfCoord(p)}]');
+      }
     }
     sb.write('RE[$result]');
     for (final GoMove move in _game?.moves ?? <GoMove>[]) {
@@ -905,9 +919,12 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     };
     final String id = _recordId ?? _recordRepository.newId(prefix: 'battle');
     _recordId = id;
+    final String source = game.moves.length >= 20
+        ? 'battle_local'
+        : 'battle_temp';
     final GameRecord record = GameRecord(
       id: id,
-      source: 'battle_local',
+      source: source,
       title: 'AI对弈 ${widget.boardSize}路 ${widget.profile.name}',
       boardSize: widget.boardSize,
       ruleset: _rules.ruleset,
@@ -928,25 +945,59 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   }
 
   Future<bool> _restoreSession() async {
-    final GameRecord? latest = await _recordRepository.loadLatestBySource(
+    final GameRecord? local = await _recordRepository.loadLatestBySource(
       'battle_local',
     );
-    if (latest == null || latest.sessionJson.isEmpty) {
+    final GameRecord? temp = await _recordRepository.loadLatestBySource(
+      'battle_temp',
+    );
+    final GameRecord? latest = () {
+      if (local == null) {
+        return temp;
+      }
+      if (temp == null) {
+        return local;
+      }
+      return local.updatedAtMs >= temp.updatedAtMs ? local : temp;
+    }();
+    if (latest == null ||
+        latest.sessionJson.isEmpty ||
+        latest.status == 'finished') {
       return false;
     }
     try {
-      _recordId = latest.id;
-      _recordCreatedAtMs = latest.createdAtMs;
       final Map<String, dynamic> data =
           jsonDecode(latest.sessionJson) as Map<String, dynamic>;
+      if (data['finalScore'] != null ||
+          (data['resignResult'] as String?) != null) {
+        return false;
+      }
+      final int boardSize =
+          (data['boardSize'] as num?)?.toInt() ?? latest.boardSize;
+      final int handicap = (data['handicap'] as num?)?.toInt() ?? 0;
+      final String restoredProfileId = (data['profileId'] as String?) ?? '';
       final String restoredRuleset =
           (data['ruleset'] as String?) ?? latest.ruleset;
       final double restoredKomi =
           (data['komi'] as num?)?.toDouble() ?? latest.komi;
+      final String expectedRuleset = widget.rules.ruleset;
+      final double expectedKomi = widget.handicap > 0 ? 0 : widget.rules.komi;
+      final bool sameConfig =
+          boardSize == widget.boardSize &&
+          handicap == widget.handicap &&
+          restoredProfileId == widget.profile.id &&
+          restoredRuleset == expectedRuleset &&
+          (restoredKomi - expectedKomi).abs() < 0.01;
+      if (!sameConfig) {
+        return false;
+      }
+      _recordId = latest.id;
+      _recordCreatedAtMs = latest.createdAtMs;
       final RulePreset restoredPreset = rulePresetFromString(restoredRuleset);
       _rules = restoredPreset.toGameRules(komi: restoredKomi);
-      final int boardSize = (data['boardSize'] as num).toInt();
-      final int handicap = (data['handicap'] as num).toInt();
+      if (handicap > 0 && _rules.komi != 0) {
+        _rules = _rules.copyWith(komi: 0);
+      }
       _playerStone = (data['playerStone'] as String) == 'white'
           ? GoStone.white
           : GoStone.black;
@@ -996,6 +1047,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
       _handicapStones = handicapStones;
       _pendingPoint = null;
       _blackWinrate = null;
+      _hintSummary = null;
       _winrateByTurn
         ..clear()
         ..addAll(
@@ -1042,12 +1094,151 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     }
   }
 
+  Future<List<_HintPointInfo>> _requestHintPointsForState(
+    GoGameState state,
+  ) async {
+    final List<String> moveTokens = state.moves
+        .map((GoMove m) => m.toProtocolToken(widget.boardSize))
+        .toList();
+    final List<String> initialTokens = _handicapStones
+        .map(
+          (GoPoint p) =>
+              'B:${GoMove(player: GoStone.black, point: p).toGtp(widget.boardSize)}',
+        )
+        .toList();
+    final KatagoAnalyzeResult analyzed = await widget.adapter.analyze(
+      KatagoAnalyzeRequest(
+        queryId: 'hint-${DateTime.now().millisecondsSinceEpoch}',
+        moves: moveTokens,
+        initialStones: initialTokens,
+        gameSetup: GameSetup(
+          boardSize: widget.boardSize,
+          startingPlayer: state.toPlay == GoStone.black
+              ? StoneColor.black
+              : StoneColor.white,
+        ),
+        rules: _rules,
+        profile: AnalysisProfile(
+          id: '${widget.profile.id}-hint',
+          name: widget.profile.name,
+          description: widget.profile.description,
+          maxVisits: max(10, widget.profile.maxVisits),
+          thinkingTimeMs: widget.profile.thinkingTimeMs,
+          includeOwnership: widget.profile.includeOwnership,
+        ),
+        timeoutMs: _timeoutBudgetMs(),
+      ),
+    );
+    final List<KatagoMoveCandidate> candidates =
+        analyzed.topCandidates.isNotEmpty
+        ? analyzed.topCandidates
+        : <KatagoMoveCandidate>[
+            KatagoMoveCandidate(
+              move: analyzed.bestMove,
+              blackWinrate: analyzed.winrate,
+            ),
+          ];
+    final List<_HintPointInfo> infos = <_HintPointInfo>[];
+    for (final KatagoMoveCandidate c in candidates) {
+      final GoPoint? p = _gtpToPoint(c.move, widget.boardSize);
+      if (p == null) {
+        continue;
+      }
+      final double playerWin = state.toPlay == GoStone.black
+          ? c.blackWinrate
+          : (1.0 - c.blackWinrate);
+      infos.add(
+        _HintPointInfo(
+          point: p,
+          move: c.move,
+          playerWinrate: playerWin.clamp(0.0, 1.0),
+        ),
+      );
+      if (infos.length >= 3) {
+        break;
+      }
+    }
+    if (infos.isEmpty) {
+      return const <_HintPointInfo>[];
+    }
+    return infos.length > 1
+        ? infos.take(3).toList()
+        : <_HintPointInfo>[infos.first];
+  }
+
+  Future<void> _showHintPoints() async {
+    final GoGameState? state = _game;
+    if (state == null || _aiThinking || _isGameOver) {
+      return;
+    }
+    setState(() {
+      _status = '正在计算提示点...';
+    });
+    try {
+      final List<_HintPointInfo> hints = await _requestHintPointsForState(
+        state,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _hintPoints = hints.map((_HintPointInfo h) => h.point).toList();
+        _hintSummary = hints.isEmpty
+            ? null
+            : hints
+                  .map(
+                    (_HintPointInfo h) =>
+                        '${h.move}:${(h.playerWinrate * 100).toStringAsFixed(1)}%',
+                  )
+                  .join('  ');
+        _status = hints.isEmpty ? '暂无可用提示点' : '提示点已标注（${hints.length}个）';
+      });
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _status = '提示失败: $e';
+      });
+    }
+  }
+
+  void _enterTryMode() {
+    if (_game == null || _tryMode || _aiThinking) {
+      return;
+    }
+    setState(() {
+      _tryMode = true;
+      _tryBaseState = _game;
+      _tryBaseStatus = _status;
+      _pendingPoint = null;
+      _hintPoints = <GoPoint>[];
+      _hintSummary = null;
+      _status = '试下模式：可同时走黑白，结束后返回实战局面';
+    });
+  }
+
+  void _exitTryMode() {
+    if (!_tryMode || _tryBaseState == null) {
+      return;
+    }
+    setState(() {
+      _game = _tryBaseState;
+      _tryMode = false;
+      _tryBaseState = null;
+      _pendingPoint = null;
+      _hintPoints = <GoPoint>[];
+      _hintSummary = null;
+      _status = _tryBaseStatus ?? '已结束试下';
+    });
+  }
+
   List<String> _buildHints({required bool good}) {
     final List<MoveHint> hints = _analysisService.buildHints(
       _winrateByTurn,
       playerStone: _playerStone,
-      blunderThreshold: 0.08,
-      brilliantEpsilon: 0.0001,
+      blunderThreshold: 0.20,
+      brilliantEpsilon: 0.05,
     );
     return hints
         .where(
@@ -1070,6 +1261,11 @@ class _AIBattlePageState extends State<_AIBattlePage> {
         final List<String> bad = _buildHints(good: false);
         final List<GoMove> moves = _game?.moves ?? <GoMove>[];
         int turn = moves.length;
+        bool reviewTryMode = false;
+        GoGameState? reviewTryState;
+        GoGameState? reviewTryBaseState;
+        List<GoPoint> reviewHints = <GoPoint>[];
+        String? reviewHintSummary;
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setSheetState) {
             return DraggableScrollableSheet(
@@ -1077,7 +1273,9 @@ class _AIBattlePageState extends State<_AIBattlePage> {
               initialChildSize: 0.92,
               maxChildSize: 0.96,
               builder: (_, ScrollController controller) {
-                final GoGameState state = _stateAtTurn(turn);
+                final GoGameState state = reviewTryMode
+                    ? (reviewTryState ?? _stateAtTurn(turn))
+                    : _stateAtTurn(turn);
                 final GoPoint? lastPoint = _lastMovePointAtTurn(turn);
                 return ListView(
                   controller: controller,
@@ -1090,9 +1288,86 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                       child: GoBoardWidget(
                         boardSize: state.boardSize,
                         board: state.board,
+                        onTapPoint: reviewTryMode
+                            ? (GoPoint p) {
+                                try {
+                                  setSheetState(() {
+                                    reviewTryState = state.play(
+                                      GoMove(player: state.toPlay, point: p),
+                                    );
+                                    reviewHints = <GoPoint>[];
+                                    reviewHintSummary = null;
+                                  });
+                                } catch (_) {}
+                              }
+                            : null,
                         lastMovePoint: lastPoint,
+                        hintPoints: reviewHints,
                       ),
                     ),
+                    Wrap(
+                      spacing: 8,
+                      children: <Widget>[
+                        OutlinedButton(
+                          onPressed: reviewTryMode
+                              ? null
+                              : () {
+                                  setSheetState(() {
+                                    reviewTryMode = true;
+                                    reviewTryBaseState = state;
+                                    reviewTryState = state;
+                                    reviewHints = <GoPoint>[];
+                                    reviewHintSummary = null;
+                                  });
+                                },
+                          child: const Text('试下'),
+                        ),
+                        OutlinedButton(
+                          onPressed: reviewTryMode
+                              ? () {
+                                  setSheetState(() {
+                                    reviewTryMode = false;
+                                    reviewTryState = reviewTryBaseState;
+                                    reviewTryBaseState = null;
+                                    reviewHints = <GoPoint>[];
+                                    reviewHintSummary = null;
+                                  });
+                                }
+                              : null,
+                          child: const Text('结束试下'),
+                        ),
+                        OutlinedButton(
+                          onPressed: () async {
+                            final List<_HintPointInfo> hints =
+                                await _requestHintPointsForState(state);
+                            if (!context.mounted) {
+                              return;
+                            }
+                            setSheetState(() {
+                              reviewHints = hints
+                                  .map((_HintPointInfo h) => h.point)
+                                  .toList();
+                              reviewHintSummary = hints.isEmpty
+                                  ? null
+                                  : hints
+                                        .map(
+                                          (_HintPointInfo h) =>
+                                              '${h.move}:${(h.playerWinrate * 100).toStringAsFixed(1)}%',
+                                        )
+                                        .join('  ');
+                            });
+                          },
+                          child: const Text('提示'),
+                        ),
+                      ],
+                    ),
+                    if (reviewHintSummary != null) ...<Widget>[
+                      const SizedBox(height: 6),
+                      Text(
+                        '提示胜率: $reviewHintSummary',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ],
                     Row(
                       children: <Widget>[
                         IconButton(
@@ -1123,6 +1398,11 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                       onChanged: (double value) {
                         setSheetState(() {
                           turn = value.round().clamp(0, moves.length);
+                          reviewTryMode = false;
+                          reviewTryState = null;
+                          reviewTryBaseState = null;
+                          reviewHints = <GoPoint>[];
+                          reviewHintSummary = null;
                         });
                       },
                     ),
@@ -1186,19 +1466,54 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   Widget build(BuildContext context) {
     final GoGameState? game = _game;
     final double? playerWin = _playerWinrate;
+    final String winrateText = playerWin == null
+        ? '--'
+        : '${(playerWin * 100).toStringAsFixed(1)}%';
+    Widget stoneTimeTag(GoStone stone, Duration value) {
+      final bool isBlack = stone == GoStone.black;
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isBlack ? Colors.black : Colors.white,
+              border: Border.all(color: Colors.black26),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(_fmtDuration(value), style: const TextStyle(fontSize: 12)),
+        ],
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
+        toolbarHeight: 68,
         titleSpacing: 8,
-        title: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Text(
-            '难度:${widget.profile.name}  让子:${widget.handicap}  '
-            '规则:${rulePresetFromString(_rules.ruleset).label}  '
-            '玩家胜率:${playerWin == null ? '--' : '${(playerWin * 100).toStringAsFixed(1)}%'}  '
-            '黑:${_fmtDuration(_clockValue(GoStone.black))}  '
-            '白:${_fmtDuration(_clockValue(GoStone.white))}',
-            style: const TextStyle(fontSize: 13),
-          ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '难度:${widget.profile.name}  规则:$_handicapLabel  胜率:$winrateText',
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: <Widget>[
+                stoneTimeTag(GoStone.black, _clockValue(GoStone.black)),
+                const SizedBox(width: 12),
+                stoneTimeTag(GoStone.white, _clockValue(GoStone.white)),
+              ],
+            ),
+          ],
         ),
       ),
       body: _restoring
@@ -1220,6 +1535,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                         tentativeStone: _pendingPoint == null
                             ? null
                             : _playerStone,
+                        hintPoints: _hintPoints,
                         padding: 14,
                       ),
                     ),
@@ -1245,6 +1561,15 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
+                        if (_hintSummary != null) ...<Widget>[
+                          const SizedBox(height: 4),
+                          Text(
+                            '提示胜率: $_hintSummary',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ],
                         if (_finalScore != null) ...<Widget>[
                           const SizedBox(height: 4),
                           Text(
@@ -1256,47 +1581,77 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                           Text('终局结果: $_resignResultText'),
                         ],
                         const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          children: <Widget>[
-                            OutlinedButton(
-                              onPressed:
-                                  (game.toPlay == _playerStone &&
-                                      !_aiThinking &&
-                                      _finalScore == null)
-                                  ? _playerPass
-                                  : null,
-                              child: const Text('Pass'),
-                            ),
-                            OutlinedButton(
-                              onPressed: (_history.length > 1 && !_aiThinking)
-                                  ? _undo
-                                  : null,
-                              child: const Text('悔棋'),
-                            ),
-                            OutlinedButton(
-                              onPressed: (!_isGameOver && !_aiThinking)
-                                  ? _playerResign
-                                  : null,
-                              child: const Text('认输'),
-                            ),
-                            OutlinedButton(
-                              onPressed: _isGameOver ? _showReviewSheet : null,
-                              child: const Text('复盘'),
-                            ),
-                            OutlinedButton(
-                              onPressed: _aiThinking
-                                  ? null
-                                  : () {
-                                      setState(_initializeGame);
-                                    },
-                              child: const Text('再战'),
-                            ),
-                            OutlinedButton(
-                              onPressed: () => Navigator.of(context).pop(),
-                              child: const Text('返回'),
-                            ),
-                          ],
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: <Widget>[
+                              OutlinedButton(
+                                onPressed: (!_isGameOver && !_aiThinking)
+                                    ? (_tryMode ? _exitTryMode : _enterTryMode)
+                                    : null,
+                                child: Text(_tryMode ? '结束试下' : '试下'),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton(
+                                onPressed: (!_isGameOver && !_aiThinking)
+                                    ? _showHintPoints
+                                    : null,
+                                child: const Text('提示'),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton(
+                                onPressed:
+                                    (game.toPlay == _playerStone &&
+                                        !_aiThinking &&
+                                        _finalScore == null)
+                                    ? _playerPass
+                                    : null,
+                                child: const Text('Pass'),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton(
+                                onPressed: (_history.length > 1 && !_aiThinking)
+                                    ? _undo
+                                    : null,
+                                child: const Text('悔棋'),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: <Widget>[
+                              OutlinedButton(
+                                onPressed: (!_isGameOver && !_aiThinking)
+                                    ? _playerResign
+                                    : null,
+                                child: const Text('认输'),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton(
+                                onPressed: _isGameOver
+                                    ? _showReviewSheet
+                                    : null,
+                                child: const Text('复盘'),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton(
+                                onPressed: _aiThinking
+                                    ? null
+                                    : () {
+                                        setState(_initializeGame);
+                                      },
+                                child: const Text('再战'),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton(
+                                onPressed: () => Navigator.of(context).pop(),
+                                child: const Text('返回'),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
@@ -1306,4 +1661,16 @@ class _AIBattlePageState extends State<_AIBattlePage> {
             ),
     );
   }
+}
+
+class _HintPointInfo {
+  const _HintPointInfo({
+    required this.point,
+    required this.move,
+    required this.playerWinrate,
+  });
+
+  final GoPoint point;
+  final String move;
+  final double playerWinrate;
 }

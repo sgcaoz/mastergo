@@ -50,6 +50,13 @@ const List<RulePreset> kRulePresets = <RulePreset>[
     scoringRule: ScoringRule.territory,
     koRule: KoRule.simple,
   ),
+  RulePreset(
+    id: 'classical',
+    label: '古谱规则（不贴目）',
+    defaultKomi: 0,
+    scoringRule: ScoringRule.territory,
+    koRule: KoRule.simple,
+  ),
 ];
 
 RulePreset rulePresetFromString(String raw) {
@@ -65,6 +72,9 @@ RulePreset rulePresetFromString(String raw) {
   }
   if (v.contains('chinese') || v.contains('china')) {
     return kRulePresets.first;
+  }
+  if (v.contains('classical') || v.contains('ancient')) {
+    return kRulePresets[3];
   }
   for (final RulePreset p in kRulePresets) {
     if (p.id == v) {

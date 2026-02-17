@@ -6,6 +6,8 @@ class SgfGame {
     required this.komi,
     required this.rules,
     required this.root,
+    this.initialBlackStones = const <GoPoint>[],
+    this.initialWhiteStones = const <GoPoint>[],
     this.blackName,
     this.whiteName,
     this.gameName,
@@ -15,6 +17,8 @@ class SgfGame {
   final double komi;
   final String rules;
   final SgfNode root;
+  final List<GoPoint> initialBlackStones;
+  final List<GoPoint> initialWhiteStones;
   final String? blackName;
   final String? whiteName;
   final String? gameName;
@@ -52,6 +56,8 @@ class SgfParser {
       komi: meta.komi,
       rules: meta.rules,
       root: root,
+      initialBlackStones: meta.initialBlackStones,
+      initialWhiteStones: meta.initialWhiteStones,
       blackName: meta.blackName,
       whiteName: meta.whiteName,
       gameName: meta.gameName,
@@ -178,6 +184,8 @@ class _SgfMeta {
     this.boardSize = 19,
     this.komi = 7.5,
     this.rules = 'chinese',
+    this.initialBlackStones = const <GoPoint>[],
+    this.initialWhiteStones = const <GoPoint>[],
     this.blackName,
     this.whiteName,
     this.gameName,
@@ -187,6 +195,8 @@ class _SgfMeta {
   final int boardSize;
   final double komi;
   final String rules;
+  final List<GoPoint> initialBlackStones;
+  final List<GoPoint> initialWhiteStones;
   final String? blackName;
   final String? whiteName;
   final String? gameName;
@@ -194,11 +204,32 @@ class _SgfMeta {
   _SgfMeta withRootProps(Map<String, List<String>> props) {
     String? first(String key) =>
         props[key]?.isNotEmpty == true ? props[key]!.first : null;
+    final int parsedBoardSize = int.tryParse(first('SZ') ?? '19') ?? 19;
+
+    List<GoPoint> parseCoords(String key) {
+      final List<String> raw = props[key] ?? const <String>[];
+      final List<GoPoint> points = <GoPoint>[];
+      for (final String s in raw) {
+        if (s.length < 2) {
+          continue;
+        }
+        final int x = s.codeUnitAt(0) - 'a'.codeUnitAt(0);
+        final int y = s.codeUnitAt(1) - 'a'.codeUnitAt(0);
+        if (x < 0 || y < 0 || x >= parsedBoardSize || y >= parsedBoardSize) {
+          continue;
+        }
+        points.add(GoPoint(x, y));
+      }
+      return points;
+    }
+
     return _SgfMeta(
       rootSeen: true,
-      boardSize: int.tryParse(first('SZ') ?? '19') ?? 19,
+      boardSize: parsedBoardSize,
       komi: double.tryParse(first('KM') ?? '7.5') ?? 7.5,
       rules: (first('RU') ?? 'chinese').toLowerCase(),
+      initialBlackStones: parseCoords('AB'),
+      initialWhiteStones: parseCoords('AW'),
       blackName: first('PB'),
       whiteName: first('PW'),
       gameName: first('GN'),

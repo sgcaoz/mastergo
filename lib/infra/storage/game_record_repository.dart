@@ -74,6 +74,52 @@ class GameRecordRepository {
     return GameRecord.fromMap(rows.first);
   }
 
+  Future<List<GameRecord>> listBySource(
+    String source, {
+    int limit = 200,
+  }) async {
+    final Database db = await _database();
+    final List<Map<String, Object?>> rows = await db.query(
+      _table,
+      where: 'source = ?',
+      whereArgs: <Object?>[source],
+      orderBy: 'updatedAtMs DESC',
+      limit: limit,
+    );
+    return rows.map(GameRecord.fromMap).toList();
+  }
+
+  Future<GameRecord?> loadById(String id) async {
+    final Database db = await _database();
+    final List<Map<String, Object?>> rows = await db.query(
+      _table,
+      where: 'id = ?',
+      whereArgs: <Object?>[id],
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    return GameRecord.fromMap(rows.first);
+  }
+
+  Future<void> deleteById(String id) async {
+    final Database db = await _database();
+    await db.delete(_table, where: 'id = ?', whereArgs: <Object?>[id]);
+  }
+
+  Future<void> deleteByIds(List<String> ids) async {
+    if (ids.isEmpty) {
+      return;
+    }
+    final Database db = await _database();
+    await db.transaction((Transaction txn) async {
+      for (final String id in ids) {
+        await txn.delete(_table, where: 'id = ?', whereArgs: <Object?>[id]);
+      }
+    });
+  }
+
   Future<void> saveMasterGame({
     required String id,
     required String title,
