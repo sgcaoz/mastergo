@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:mastergo/application/analysis/game_analysis_service.dart';
 import 'package:mastergo/domain/entities/analysis_profile.dart';
 import 'package:mastergo/domain/entities/game_record.dart';
+import 'package:mastergo/domain/entities/master_game_meta.dart';
 import 'package:mastergo/domain/entities/rule_presets.dart';
 import 'package:mastergo/domain/entities/game_setup.dart';
 import 'package:mastergo/domain/go/go_game.dart';
@@ -14,6 +15,8 @@ import 'package:mastergo/domain/go/go_types.dart';
 import 'package:mastergo/domain/sgf/sgf_parser.dart';
 import 'package:mastergo/features/common/go_board_widget.dart';
 import 'package:mastergo/features/common/winrate_chart.dart';
+import 'package:mastergo/features/photo_judge/photo_judge_page.dart';
+import 'package:mastergo/infra/config/master_game_repository.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
 import 'package:mastergo/infra/storage/game_record_repository.dart';
 
@@ -301,8 +304,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   }
 
   Widget _buildLibraryHome(BuildContext context) {
+    final MasterGameRepository masterRepo = MasterGameRepository();
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -338,6 +342,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
             tabs: <Tab>[
               Tab(text: '本机对局'),
               Tab(text: '下载棋谱'),
+              Tab(text: '名局'),
             ],
           ),
           Expanded(
@@ -345,15 +350,98 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
               children: <Widget>[
                 _buildRecordList('battle_local'),
                 _buildRecordList('download'),
+                FutureBuilder<List<MasterGameMeta>>(
+                  future: masterRepo.loadIndex(),
+                  builder:
+                      (
+                        BuildContext context,
+                        AsyncSnapshot<List<MasterGameMeta>> snapshot,
+                      ) {
+                        if (snapshot.connectionState != ConnectionState.done) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+                        if (snapshot.hasError) {
+                          return Center(
+                            child: Text('加载名局失败: ${snapshot.error}'),
+                          );
+                        }
+                        final List<MasterGameMeta> games =
+                            snapshot.data ?? <MasterGameMeta>[];
+                        if (games.isEmpty) {
+                          return const Center(child: Text('暂无名局'));
+                        }
+                        return ListView.separated(
+                          itemCount: games.length,
+                          separatorBuilder: (_, _) => const Divider(height: 1),
+                          itemBuilder: (_, int i) {
+                            final MasterGameMeta g = games[i];
+                            return ListTile(
+                              title: Text(g.title),
+                              subtitle: Text(
+                                '${g.players} · ${g.event} · ${g.year}',
+                              ),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () async {
+                                final String sgf = await masterRepo
+                                    .loadSgfContent(g.sgfAssetPath);
+                                await _recordRepository.saveMasterGame(
+                                  id: 'master-${g.id}',
+                                  title: g.title,
+                                  boardSize: g.boardSize,
+                                  ruleset: g.ruleset,
+                                  komi: g.komi,
+                                  sgf: sgf,
+                                );
+                                if (!context.mounted) {
+                                  return;
+                                }
+                                await Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => RecordReviewPage(
+                                      initialSgfContent: sgf,
+                                      initialTitle: g.title,
+                                      initialRecordId: 'master-${g.id}',
+                                      initialSource: 'master',
+                                    ),
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        );
+                      },
+                ),
               ],
             ),
           ),
           Padding(
             padding: const EdgeInsets.all(12),
-            child: FilledButton.icon(
-              onPressed: _openImportPage,
-              icon: const Icon(Icons.upload_file),
-              label: const Text('导入棋谱（文件/URL）'),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _openImportPage,
+                    icon: const Icon(Icons.upload_file),
+                    label: const Text('导入棋谱'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const PhotoJudgePage(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.photo_camera),
+                    label: const Text('拍照判断'),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
