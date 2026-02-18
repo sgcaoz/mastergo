@@ -13,6 +13,8 @@ import 'package:mastergo/domain/entities/game_record.dart';
 import 'package:mastergo/domain/go/go_game.dart';
 import 'package:mastergo/domain/go/go_types.dart';
 import 'package:mastergo/features/common/go_board_widget.dart';
+import 'package:mastergo/features/common/ownership_result_sheet.dart';
+import 'package:mastergo/features/common/review_board_panel.dart';
 import 'package:mastergo/features/common/winrate_chart.dart';
 import 'package:mastergo/infra/config/ai_profile_repository.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
@@ -653,11 +655,123 @@ class _AIBattlePageState extends State<_AIBattlePage> {
       return;
     }
     if (_game!.consecutivePasses >= 2) {
-      _finalScore = _game!.scoreByRules(_rules);
       _freezeActiveClock();
-      _status = '终局: ${_finalScore!.winnerText()}';
-      unawaited(_persistSession());
+      unawaited(_finishGameWithOwnership());
     }
+  }
+
+  /// Uses KataGo ownership for precise 数目 when both players passed.
+  Future<void> _finishGameWithOwnership() async {
+    if (_game == null || _game!.consecutivePasses < 2) {
+      return;
+    }
+    setState(() {
+      _status = '正在数目...';
+    });
+    try {
+      final List<String> moveTokens = _game!.moves
+          .map((GoMove m) => m.toProtocolToken(widget.boardSize))
+          .toList();
+      final List<String> initialTokens = _handicapStones
+          .map(
+            (GoPoint p) =>
+                'B:${GoMove(player: GoStone.black, point: p).toGtp(widget.boardSize)}',
+          )
+          .toList();
+      final AnalysisProfile profile = _effectiveProfileForTurn(_game!.moves.length);
+      final KatagoAnalyzeResult res = await widget.adapter.analyze(
+        KatagoAnalyzeRequest(
+          queryId: 'count-${DateTime.now().millisecondsSinceEpoch}',
+          moves: moveTokens,
+          initialStones: initialTokens,
+          gameSetup: GameSetup(
+            boardSize: widget.boardSize,
+            startingPlayer: _game!.toPlay == GoStone.black
+                ? StoneColor.black
+                : StoneColor.white,
+          ),
+          rules: _rules,
+          profile: profile,
+          includeOwnership: true,
+          timeoutMs: _timeoutBudgetMsForProfile(profile),
+        ),
+      );
+      final GoScore? score = _scoreFromOwnership(res.ownership);
+      if (mounted) {
+        setState(() {
+          _finalScore = score ?? _game!.scoreByRules(_rules);
+          _status = '终局: ${_finalScore!.winnerText()}';
+        });
+        unawaited(_persistSession());
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _finalScore = _game!.scoreByRules(_rules);
+          _status = '终局: ${_finalScore!.winnerText()}';
+        });
+        unawaited(_persistSession());
+      }
+    }
+  }
+
+  static const double _ownershipThreshold = 0.35;
+
+  /// 用 ownership 判断每个交叉点归属（含棋子死活）：有子也看 ownership，归属对方即为死子，该点算入对方面积。
+  GoScore? _scoreFromOwnership(List<double>? ownership) {
+    if (_game == null ||
+        ownership == null ||
+        ownership.length < widget.boardSize * widget.boardSize) {
+      return null;
+    }
+    int livingBlackStones = 0;
+    int livingWhiteStones = 0;
+    int blackTerritory = 0;
+    int whiteTerritory = 0;
+    int deadWhiteInBlack = 0; // 白子但 ownership 属黑 → 死白子，该点算黑
+    int deadBlackInWhite = 0; // 黑子但 ownership 属白 → 死黑子，该点算白
+    for (int y = 0; y < widget.boardSize; y++) {
+      for (int x = 0; x < widget.boardSize; x++) {
+        final GoStone? s = _game!.board[y][x];
+        final int idx = y * widget.boardSize + x;
+        final double v = idx < ownership.length ? ownership[idx] : 0.0;
+        final bool belongsToBlack = v < -_ownershipThreshold;
+        final bool belongsToWhite = v > _ownershipThreshold;
+        if (s == GoStone.black) {
+          if (belongsToBlack) {
+            livingBlackStones++;
+          } else if (belongsToWhite) {
+            deadBlackInWhite++;
+          }
+        } else if (s == GoStone.white) {
+          if (belongsToWhite) {
+            livingWhiteStones++;
+          } else if (belongsToBlack) {
+            deadWhiteInBlack++;
+          }
+        } else {
+          if (belongsToBlack) {
+            blackTerritory++;
+          } else if (belongsToWhite) {
+            whiteTerritory++;
+          }
+        }
+      }
+    }
+    // 面积 = 活子 + 己方空点 + 对方死子所在点（按 ownership 归属）
+    final double blackArea = (livingBlackStones + blackTerritory + deadWhiteInBlack).toDouble();
+    final double whiteArea = (livingWhiteStones + whiteTerritory + deadBlackInWhite).toDouble() + _rules.komi;
+    return GoScore(
+      blackStones: livingBlackStones,
+      whiteStones: livingWhiteStones,
+      blackTerritory: blackTerritory,
+      whiteTerritory: whiteTerritory,
+      komi: _rules.komi,
+      blackArea: blackArea,
+      whiteArea: whiteArea,
+      blackCaptures: _game!.blackCaptures,
+      whiteCaptures: _game!.whiteCaptures,
+    );
   }
 
   void _undo() {
@@ -1203,6 +1317,88 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     }
   }
 
+  /// 对任意局面请求势力/目数分析，供对局中与复盘共用。
+  Future<KatagoAnalyzeResult> _requestOwnershipAnalysis(GoGameState state) {
+    final List<String> moveTokens = state.moves
+        .map((GoMove m) => m.toProtocolToken(widget.boardSize))
+        .toList();
+    final List<String> initialTokens = _handicapStones
+        .map(
+          (GoPoint p) =>
+              'B:${GoMove(player: GoStone.black, point: p).toGtp(widget.boardSize)}',
+        )
+        .toList();
+    final AnalysisProfile profile =
+        _effectiveProfileForTurn(state.moves.length);
+    // 局势分析优先可用性：固定低 visits，避免复盘场景超时。
+    final AnalysisProfile ownershipProfile = AnalysisProfile(
+      id: '${profile.id}-ownership-fast',
+      name: profile.name,
+      description: profile.description,
+      maxVisits: 5,
+      thinkingTimeMs: min(profile.thinkingTimeMs, 300),
+      includeOwnership: true,
+    );
+    final int timeoutMs = max(_timeoutBudgetMsForProfile(ownershipProfile), 30000);
+    return widget.adapter.analyze(
+      KatagoAnalyzeRequest(
+        queryId: 'ownership-${DateTime.now().millisecondsSinceEpoch}',
+        moves: moveTokens,
+        initialStones: initialTokens,
+        gameSetup: GameSetup(
+          boardSize: widget.boardSize,
+          startingPlayer: state.toPlay == GoStone.black
+              ? StoneColor.black
+              : StoneColor.white,
+        ),
+        rules: _rules,
+        profile: ownershipProfile,
+        includeOwnership: true,
+        timeoutMs: timeoutMs,
+      ),
+    );
+  }
+
+  void _showOwnershipResultSheet(
+    BuildContext ctx,
+    GoGameState state,
+    KatagoAnalyzeResult res, {
+    GoPoint? lastMovePoint,
+  }) {
+    showOwnershipResultSheet(ctx, state, res, boardSize: widget.boardSize);
+  }
+
+  Future<void> _showPositionAnalysis() async {
+    final GoGameState? state = _game;
+    if (state == null || _aiThinking || _isGameOver) {
+      return;
+    }
+    setState(() {
+      _status = '正在分析局势...';
+    });
+    try {
+      final KatagoAnalyzeResult res = await _requestOwnershipAnalysis(state);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _status = '分析完成';
+      });
+      if (!mounted) {
+        return;
+      }
+      _showOwnershipResultSheet(context, state, res,
+          lastMovePoint: _lastMovePoint());
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _status = '局势分析失败: $e';
+      });
+    }
+  }
+
   void _enterTryMode() {
     if (_game == null || _tryMode || _aiThinking) {
       return;
@@ -1266,6 +1462,8 @@ class _AIBattlePageState extends State<_AIBattlePage> {
         GoGameState? reviewTryBaseState;
         List<GoPoint> reviewHints = <GoPoint>[];
         String? reviewHintSummary;
+        bool reviewHintLoading = false;
+        bool reviewOwnershipLoading = false;
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setSheetState) {
             return DraggableScrollableSheet(
@@ -1277,180 +1475,158 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                     ? (reviewTryState ?? _stateAtTurn(turn))
                     : _stateAtTurn(turn);
                 final GoPoint? lastPoint = _lastMovePointAtTurn(turn);
+                void exitTryAndClearHints() {
+                  reviewTryMode = false;
+                  reviewTryState = reviewTryBaseState;
+                  reviewTryBaseState = null;
+                  reviewHints = <GoPoint>[];
+                  reviewHintSummary = null;
+                }
                 return ListView(
                   controller: controller,
                   padding: const EdgeInsets.all(12),
                   children: <Widget>[
-                    Text('复盘', style: Theme.of(context).textTheme.titleLarge),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      height: 320,
-                      child: GoBoardWidget(
-                        boardSize: state.boardSize,
-                        board: state.board,
-                        onTapPoint: reviewTryMode
-                            ? (GoPoint p) {
-                                try {
-                                  setSheetState(() {
-                                    reviewTryState = state.play(
-                                      GoMove(player: state.toPlay, point: p),
-                                    );
-                                    reviewHints = <GoPoint>[];
-                                    reviewHintSummary = null;
-                                  });
-                                } catch (_) {}
-                              }
-                            : null,
-                        lastMovePoint: lastPoint,
-                        hintPoints: reviewHints,
-                      ),
-                    ),
-                    Wrap(
-                      spacing: 8,
-                      children: <Widget>[
-                        OutlinedButton(
-                          onPressed: reviewTryMode
-                              ? null
-                              : () {
-                                  setSheetState(() {
-                                    reviewTryMode = true;
-                                    reviewTryBaseState = state;
-                                    reviewTryState = state;
-                                    reviewHints = <GoPoint>[];
-                                    reviewHintSummary = null;
-                                  });
-                                },
-                          child: const Text('试下'),
-                        ),
-                        OutlinedButton(
-                          onPressed: reviewTryMode
-                              ? () {
-                                  setSheetState(() {
-                                    reviewTryMode = false;
-                                    reviewTryState = reviewTryBaseState;
-                                    reviewTryBaseState = null;
-                                    reviewHints = <GoPoint>[];
-                                    reviewHintSummary = null;
-                                  });
-                                }
-                              : null,
-                          child: const Text('结束试下'),
-                        ),
-                        OutlinedButton(
-                          onPressed: () async {
-                            final List<_HintPointInfo> hints =
-                                await _requestHintPointsForState(state);
-                            if (!context.mounted) {
-                              return;
-                            }
-                            setSheetState(() {
-                              reviewHints = hints
-                                  .map((_HintPointInfo h) => h.point)
-                                  .toList();
-                              reviewHintSummary = hints.isEmpty
-                                  ? null
-                                  : hints
-                                        .map(
-                                          (_HintPointInfo h) =>
-                                              '${h.move}:${(h.playerWinrate * 100).toStringAsFixed(1)}%',
-                                        )
-                                        .join('  ');
-                            });
-                          },
-                          child: const Text('提示'),
-                        ),
-                      ],
-                    ),
-                    if (reviewHintSummary != null) ...<Widget>[
-                      const SizedBox(height: 6),
-                      Text(
-                        '提示胜率: $reviewHintSummary',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ],
-                    Row(
-                      children: <Widget>[
-                        IconButton(
-                          onPressed: turn > 0
-                              ? () => setSheetState(() {
-                                  turn -= 1;
-                                })
-                              : null,
-                          icon: const Icon(Icons.chevron_left),
-                        ),
-                        Expanded(child: Text('当前手数: $turn/${moves.length}')),
-                        IconButton(
-                          onPressed: turn < moves.length
-                              ? () => setSheetState(() {
-                                  turn += 1;
-                                })
-                              : null,
-                          icon: const Icon(Icons.chevron_right),
-                        ),
-                      ],
-                    ),
-                    Slider(
-                      value: turn.toDouble(),
-                      min: 0,
-                      max: max(1, moves.length).toDouble(),
-                      divisions: max(1, moves.length),
-                      label: '$turn',
-                      onChanged: (double value) {
+                    ReviewBoardPanel(
+                      title: '复盘',
+                      state: state,
+                      lastMovePoint: lastPoint,
+                      tryMode: reviewTryMode,
+                      hintPoints: reviewHints,
+                      hintSummary: reviewHintSummary,
+                      hintLoading: reviewHintLoading,
+                      ownershipLoading: reviewOwnershipLoading,
+                      onEnterTry: () {
                         setSheetState(() {
-                          turn = value.round().clamp(0, moves.length);
-                          reviewTryMode = false;
-                          reviewTryState = null;
-                          reviewTryBaseState = null;
+                          reviewTryMode = true;
+                          reviewTryBaseState = state;
+                          reviewTryState = state;
                           reviewHints = <GoPoint>[];
                           reviewHintSummary = null;
                         });
                       },
-                    ),
-                    SizedBox(
-                      height: 180,
-                      child: WinrateChart(
-                        winrates: _winrateByTurn,
-                        maxTurn: max((_game?.moves.length ?? 1), 1),
+                      onExitTry: () => setSheetState(exitTryAndClearHints),
+                      onTryPlay: (GoPoint p) {
+                        try {
+                          setSheetState(() {
+                            reviewTryState = state.play(
+                              GoMove(player: state.toPlay, point: p),
+                            );
+                            reviewHints = <GoPoint>[];
+                            reviewHintSummary = null;
+                          });
+                        } catch (_) {}
+                      },
+                      onRequestHint: () async {
+                        setSheetState(() => reviewHintLoading = true);
+                        final List<_HintPointInfo> hints =
+                            await _requestHintPointsForState(state);
+                        if (!context.mounted) return;
+                        setSheetState(() {
+                          reviewHintLoading = false;
+                          reviewHints =
+                              hints.map((_HintPointInfo h) => h.point).toList();
+                          reviewHintSummary = hints.isEmpty
+                              ? null
+                              : hints
+                                    .map(
+                                      (_HintPointInfo h) =>
+                                          '${h.move}:${(h.playerWinrate * 100).toStringAsFixed(1)}%',
+                                    )
+                                    .join('  ');
+                        });
+                      },
+                      onRequestOwnership: () async {
+                        setSheetState(() => reviewOwnershipLoading = true);
+                        try {
+                          final KatagoAnalyzeResult res =
+                              await _requestOwnershipAnalysis(state);
+                          if (!context.mounted) return;
+                          setSheetState(() => reviewOwnershipLoading = false);
+                          _showOwnershipResultSheet(context, state, res);
+                        } catch (e) {
+                          if (context.mounted) {
+                            setSheetState(() => reviewOwnershipLoading = false);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('局势分析失败: $e')),
+                            );
+                          }
+                        }
+                      },
+                      turnNavigation: Row(
+                        children: <Widget>[
+                          IconButton(
+                            onPressed: turn > 0
+                                ? () => setSheetState(() => turn -= 1)
+                                : null,
+                            icon: const Icon(Icons.chevron_left),
+                          ),
+                          Expanded(
+                              child: Text('当前手数: $turn/${moves.length}')),
+                          IconButton(
+                            onPressed: turn < moves.length
+                                ? () => setSheetState(() => turn += 1)
+                                : null,
+                            icon: const Icon(Icons.chevron_right),
+                          ),
+                        ],
                       ),
-                    ),
-                    if (_winrateByTurn.containsKey(turn))
-                      Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Text(() {
-                          final double black = _winrateByTurn[turn]!;
-                          final double player = _playerStone == GoStone.black
-                              ? black
-                              : (1.0 - black);
-                          return '第$turn手玩家胜率: ${(player * 100).toStringAsFixed(1)}%';
-                        }()),
+                      bottomChild: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Slider(
+                            value: turn.toDouble(),
+                            min: 0,
+                            max: max(1, moves.length).toDouble(),
+                            divisions: max(1, moves.length),
+                            label: '$turn',
+                            onChanged: (double value) {
+                              setSheetState(() {
+                                turn = value.round().clamp(0, moves.length);
+                                exitTryAndClearHints();
+                              });
+                            },
+                          ),
+                          SizedBox(
+                            height: 180,
+                            child: WinrateChart(
+                              winrates: _winrateByTurn,
+                              maxTurn: max((_game?.moves.length ?? 1), 1),
+                            ),
+                          ),
+                          if (_winrateByTurn.containsKey(turn))
+                            Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Text(() {
+                                final double black = _winrateByTurn[turn]!;
+                                final double player = _playerStone == GoStone.black
+                                    ? black
+                                    : (1.0 - black);
+                                return '第$turn手玩家胜率: ${(player * 100).toStringAsFixed(1)}%';
+                              }()),
+                            ),
+                          const SizedBox(height: 8),
+                          Text('妙手提示',
+                              style: Theme.of(context).textTheme.titleMedium),
+                          if (good.isEmpty)
+                            const Text('暂无明显妙手')
+                          else
+                            ...good.map(Text.new),
+                          const SizedBox(height: 8),
+                          Text('恶手提示',
+                              style: Theme.of(context).textTheme.titleMedium),
+                          if (bad.isEmpty)
+                            const Text('暂无明显恶手')
+                          else
+                            ...bad.map(Text.new),
+                          const SizedBox(height: 8),
+                          Text('自动记录 SGF（可复制）',
+                              style: Theme.of(context).textTheme.titleMedium),
+                          const SizedBox(height: 4),
+                          SelectableText(
+                              _toSgf(), style: const TextStyle(fontSize: 12)),
+                        ],
                       ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '妙手提示',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    if (good.isEmpty)
-                      const Text('暂无明显妙手')
-                    else
-                      ...good.map(Text.new),
-                    const SizedBox(height: 8),
-                    Text(
-                      '恶手提示',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    if (bad.isEmpty)
-                      const Text('暂无明显恶手')
-                    else
-                      ...bad.map(Text.new),
-                    const SizedBox(height: 8),
-                    Text(
-                      '自动记录 SGF（可复制）',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 4),
-                    SelectableText(
-                      _toSgf(),
-                      style: const TextStyle(fontSize: 12),
                     ),
                   ],
                 );
@@ -1469,6 +1645,20 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     final String winrateText = playerWin == null
         ? '--'
         : '${(playerWin * 100).toStringAsFixed(1)}%';
+    Widget compactBtn(VoidCallback? onPressed, String label) {
+      return OutlinedButton(
+        style: OutlinedButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          textStyle: const TextStyle(fontSize: 12),
+        ),
+        onPressed: onPressed,
+        child: Text(label),
+      );
+    }
+
     Widget stoneTimeTag(GoStone stone, Duration value) {
       final bool isBlack = stone == GoStone.black;
       return Row(
@@ -1580,78 +1770,63 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                           const SizedBox(height: 4),
                           Text('终局结果: $_resignResultText'),
                         ],
-                        const SizedBox(height: 8),
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            children: <Widget>[
-                              OutlinedButton(
-                                onPressed: (!_isGameOver && !_aiThinking)
-                                    ? (_tryMode ? _exitTryMode : _enterTryMode)
-                                    : null,
-                                child: Text(_tryMode ? '结束试下' : '试下'),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton(
-                                onPressed: (!_isGameOver && !_aiThinking)
-                                    ? _showHintPoints
-                                    : null,
-                                child: const Text('提示'),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton(
-                                onPressed:
-                                    (game.toPlay == _playerStone &&
-                                        !_aiThinking &&
-                                        _finalScore == null)
-                                    ? _playerPass
-                                    : null,
-                                child: const Text('Pass'),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton(
-                                onPressed: (_history.length > 1 && !_aiThinking)
-                                    ? _undo
-                                    : null,
-                                child: const Text('悔棋'),
-                              ),
-                            ],
-                          ),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 4,
+                          runSpacing: 4,
+                          children: <Widget>[
+                            compactBtn(
+                              (!_isGameOver && !_aiThinking)
+                                  ? (_tryMode ? _exitTryMode : _enterTryMode)
+                                  : null,
+                              _tryMode ? '结束试下' : '试下',
+                            ),
+                            compactBtn(
+                              (!_isGameOver && !_aiThinking)
+                                  ? _showHintPoints
+                                  : null,
+                              '提示',
+                            ),
+                            compactBtn(
+                              (!_isGameOver && !_aiThinking)
+                                  ? _showPositionAnalysis
+                                  : null,
+                              '局势分析',
+                            ),
+                            compactBtn(
+                              (game.toPlay == _playerStone &&
+                                      !_aiThinking &&
+                                      _finalScore == null)
+                                  ? _playerPass
+                                  : null,
+                              'Pass',
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 8),
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            children: <Widget>[
-                              OutlinedButton(
-                                onPressed: (!_isGameOver && !_aiThinking)
-                                    ? _playerResign
-                                    : null,
-                                child: const Text('认输'),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton(
-                                onPressed: _isGameOver
-                                    ? _showReviewSheet
-                                    : null,
-                                child: const Text('复盘'),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton(
-                                onPressed: _aiThinking
-                                    ? null
-                                    : () {
-                                        setState(_initializeGame);
-                                      },
-                                child: const Text('再战'),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton(
-                                onPressed: () => Navigator.of(context).pop(),
-                                child: const Text('返回'),
-                              ),
-                            ],
-                          ),
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 4,
+                          runSpacing: 4,
+                          children: <Widget>[
+                            compactBtn(
+                              (_history.length > 1 && !_aiThinking) ? _undo : null,
+                              '悔棋',
+                            ),
+                            compactBtn(
+                              (!_isGameOver && !_aiThinking)
+                                  ? _playerResign
+                                  : null,
+                              '认输',
+                            ),
+                            compactBtn(
+                              _isGameOver ? _showReviewSheet : null,
+                              '复盘',
+                            ),
+                            compactBtn(
+                              () => Navigator.of(context).pop(),
+                              '返回',
+                            ),
+                          ],
                         ),
                       ],
                     ),

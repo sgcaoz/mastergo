@@ -17,6 +17,7 @@ class KatagoAnalyzeRequest {
     this.initialStones = const <String>[],
     this.analyzeTurns = const <int>[],
     this.timeoutMs,
+    this.includeOwnership = false,
   });
 
   final String queryId;
@@ -27,6 +28,8 @@ class KatagoAnalyzeRequest {
   final List<String> initialStones;
   final List<int> analyzeTurns;
   final int? timeoutMs;
+  /// When true, engine returns per-point ownership (-1 black to 1 white) for territory display.
+  final bool includeOwnership;
 }
 
 class KatagoAnalyzeResult {
@@ -37,6 +40,7 @@ class KatagoAnalyzeResult {
     required this.bestMove,
     this.topCandidates = const <KatagoMoveCandidate>[],
     this.topMoves = const <String>[],
+    this.ownership,
   });
 
   final String queryId;
@@ -45,6 +49,8 @@ class KatagoAnalyzeResult {
   final String bestMove;
   final List<KatagoMoveCandidate> topCandidates;
   final List<String> topMoves;
+  /// Per-point ownership from KataGo: row-major, -1 = black territory, 1 = white. Length boardSize².
+  final List<double>? ownership;
 }
 
 class KatagoMoveCandidate {
@@ -130,6 +136,7 @@ class PlatformKatagoAdapter implements KatagoAdapter {
           'initialStones': request.initialStones,
           'modelId': _activeModel?.id,
           'timeoutMs': request.timeoutMs,
+          'includeOwnership': request.includeOwnership,
         });
     if (response == null) {
       throw StateError('KataGo analyzeOnce returned null');
@@ -142,6 +149,14 @@ class PlatformKatagoAdapter implements KatagoAdapter {
         .map((KatagoMoveCandidate c) => c.move)
         .toList();
 
+    List<double>? ownership;
+    final Object? rawOwnership = response['ownership'];
+    if (rawOwnership is List) {
+      ownership = rawOwnership
+          .map((dynamic e) => (e is num) ? e.toDouble() : 0.0)
+          .toList();
+    }
+
     return KatagoAnalyzeResult(
       queryId: response['queryId'] as String,
       winrate: (response['winrate'] as num).toDouble(),
@@ -149,6 +164,7 @@ class PlatformKatagoAdapter implements KatagoAdapter {
       bestMove: response['bestMove'] as String,
       topCandidates: topCandidates,
       topMoves: topMoves,
+      ownership: ownership,
     );
   }
 

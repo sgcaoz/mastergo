@@ -13,9 +13,9 @@ import 'package:mastergo/domain/entities/game_setup.dart';
 import 'package:mastergo/domain/go/go_game.dart';
 import 'package:mastergo/domain/go/go_types.dart';
 import 'package:mastergo/domain/sgf/sgf_parser.dart';
-import 'package:mastergo/features/common/go_board_widget.dart';
+import 'package:mastergo/features/common/ownership_result_sheet.dart';
+import 'package:mastergo/features/common/review_board_panel.dart';
 import 'package:mastergo/features/common/winrate_chart.dart';
-import 'package:mastergo/features/photo_judge/photo_judge_page.dart';
 import 'package:mastergo/infra/config/master_game_repository.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
 import 'package:mastergo/infra/storage/game_record_repository.dart';
@@ -73,6 +73,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   bool _reviewTryMode = false;
   GoGameState? _reviewTryState;
   List<GoPoint> _reviewHintPoints = <GoPoint>[];
+  bool _reviewHintLoading = false;
+  bool _reviewOwnershipLoading = false;
   bool _selectMode = false;
   final Set<String> _selectedIds = <String>{};
   final Map<String, Future<List<GameRecord>>> _sourceFutures =
@@ -418,30 +420,10 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           ),
           Padding(
             padding: const EdgeInsets.all(12),
-            child: Row(
-              children: <Widget>[
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _openImportPage,
-                    icon: const Icon(Icons.upload_file),
-                    label: const Text('导入棋谱'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const PhotoJudgePage(),
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.photo_camera),
-                    label: const Text('拍照判断'),
-                  ),
-                ),
-              ],
+            child: FilledButton.icon(
+              onPressed: _openImportPage,
+              icon: const Icon(Icons.upload_file),
+              label: const Text('导入棋谱（文件/URL）'),
             ),
           ),
         ],
@@ -772,6 +754,53 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     return GoPoint(x, y);
   }
 
+  Future<KatagoAnalyzeResult> _requestOwnershipAnalysis(GoGameState state) async {
+    if (_sgf == null) {
+      throw StateError('无棋谱');
+    }
+    final List<String> moveTokens = state.moves
+        .map((GoMove m) => m.toProtocolToken(_sgf!.boardSize))
+        .toList();
+    final List<String> initialStones = <String>[
+      ..._sgf!.initialBlackStones.map(
+        (GoPoint p) =>
+            'B:${GoMove(player: GoStone.black, point: p).toGtp(_sgf!.boardSize)}',
+      ),
+      ..._sgf!.initialWhiteStones.map(
+        (GoPoint p) =>
+            'W:${GoMove(player: GoStone.white, point: p).toGtp(_sgf!.boardSize)}',
+      ),
+    ];
+    final RulePreset preset = rulePresetFromString(_ruleset);
+    final double komi =
+        double.tryParse(_komiController.text) ?? preset.defaultKomi;
+    final AnalysisProfile ownershipProfile = AnalysisProfile(
+      id: '${_analysisProfile.id}-ownership-fast',
+      name: _analysisProfile.name,
+      description: _analysisProfile.description,
+      maxVisits: 5,
+      thinkingTimeMs: 300,
+      includeOwnership: true,
+    );
+    return _katagoAdapter.analyze(
+      KatagoAnalyzeRequest(
+        queryId: 'review-ownership-${DateTime.now().millisecondsSinceEpoch}',
+        moves: moveTokens,
+        initialStones: initialStones,
+        gameSetup: GameSetup(
+          boardSize: _sgf!.boardSize,
+          startingPlayer: state.toPlay == GoStone.black
+              ? StoneColor.black
+              : StoneColor.white,
+        ),
+        rules: preset.toGameRules(komi: komi),
+        profile: ownershipProfile,
+        includeOwnership: true,
+        timeoutMs: _isThirdPartyRecord ? 60000 : 30000,
+      ),
+    );
+  }
+
   Future<void> _requestReviewHint(GoGameState state) async {
     if (_sgf == null) {
       return;
@@ -989,130 +1018,133 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           const SizedBox(height: 20),
         ],
         if (_sgf != null && boardState != null) ...<Widget>[
-          SizedBox(
-            height: 320,
-            child: GoBoardWidget(
-              boardSize: (_reviewTryState ?? boardState).boardSize,
-              board: (_reviewTryState ?? boardState).board,
-              onTapPoint: _reviewTryMode
-                  ? (GoPoint p) {
-                      final GoGameState cur = _reviewTryState ?? boardState;
-                      try {
-                        setState(() {
-                          _reviewTryState = cur.play(
-                            GoMove(player: cur.toPlay, point: p),
-                          );
-                          _reviewHintPoints = <GoPoint>[];
-                        });
-                      } catch (_) {}
-                    }
-                  : null,
-              hintPoints: _reviewHintPoints,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            children: <Widget>[
-              OutlinedButton(
-                onPressed: _reviewTryMode
-                    ? null
-                    : () {
-                        setState(() {
-                          _reviewTryMode = true;
-                          _reviewTryState = boardState;
-                          _reviewHintPoints = <GoPoint>[];
-                        });
-                      },
-                child: const Text('试下'),
-              ),
-              OutlinedButton(
-                onPressed: _reviewTryMode
-                    ? () {
-                        setState(() {
-                          _reviewTryMode = false;
-                          _reviewTryState = null;
-                          _reviewHintPoints = <GoPoint>[];
-                        });
-                      }
-                    : null,
-                child: const Text('结束试下'),
-              ),
-              OutlinedButton(
-                onPressed: () async {
-                  final GoGameState state = _reviewTryState ?? boardState;
-                  await _requestReviewHint(state);
-                },
-                child: const Text('提示'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: <Widget>[
-              IconButton(
-                onPressed: _path.isNotEmpty ? _prev : null,
-                icon: const Icon(Icons.chevron_left),
-              ),
-              Expanded(child: Text('当前手数: $_currentTurn')),
-              if (_currentNode != null && _currentNode!.children.length > 1)
-                SizedBox(
-                  width: 120,
-                  child: DropdownButtonFormField<int>(
-                    initialValue: _selectedVariation.clamp(
-                      0,
-                      _currentNode!.children.length - 1,
-                    ),
-                    items: List<DropdownMenuItem<int>>.generate(
-                      _currentNode!.children.length,
-                      (int i) => DropdownMenuItem<int>(
-                        value: i,
-                        child: Text('变着${i + 1}'),
+          ReviewBoardPanel(
+            title: '打谱',
+            state: _reviewTryState ?? boardState,
+            lastMovePoint: (_reviewTryState ?? boardState).moves.isNotEmpty
+                ? (_reviewTryState ?? boardState).moves.last.point
+                : null,
+            tryMode: _reviewTryMode,
+            hintPoints: _reviewHintPoints,
+            hintSummary: _reviewHintPoints.isEmpty
+                ? null
+                : '已标注 ${_reviewHintPoints.length} 个提示点',
+            hintLoading: _reviewHintLoading,
+            ownershipLoading: _reviewOwnershipLoading,
+            onEnterTry: () {
+              setState(() {
+                _reviewTryMode = true;
+                _reviewTryState = boardState;
+                _reviewHintPoints = <GoPoint>[];
+              });
+            },
+            onExitTry: () {
+              setState(() {
+                _reviewTryMode = false;
+                _reviewTryState = null;
+                _reviewHintPoints = <GoPoint>[];
+              });
+            },
+            onTryPlay: (GoPoint p) {
+              final GoGameState cur = _reviewTryState ?? boardState;
+              try {
+                setState(() {
+                  _reviewTryState =
+                      cur.play(GoMove(player: cur.toPlay, point: p));
+                  _reviewHintPoints = <GoPoint>[];
+                });
+              } catch (_) {}
+            },
+            onRequestHint: () async {
+              setState(() => _reviewHintLoading = true);
+              await _requestReviewHint(_reviewTryState ?? boardState);
+              if (mounted) setState(() => _reviewHintLoading = false);
+            },
+            onRequestOwnership: () async {
+              final GoGameState state = _reviewTryState ?? boardState;
+              setState(() => _reviewOwnershipLoading = true);
+              try {
+                final KatagoAnalyzeResult res =
+                    await _requestOwnershipAnalysis(state);
+                if (!mounted) return;
+                setState(() => _reviewOwnershipLoading = false);
+                showOwnershipResultSheet(context, state, res);
+              } catch (e) {
+                if (mounted) {
+                  setState(() => _reviewOwnershipLoading = false);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('局势分析失败: $e')),
+                  );
+                }
+              }
+            },
+            turnNavigation: Row(
+              children: <Widget>[
+                IconButton(
+                  onPressed: _path.isNotEmpty ? _prev : null,
+                  icon: const Icon(Icons.chevron_left),
+                ),
+                Expanded(child: Text('当前手数: $_currentTurn')),
+                if (_currentNode != null && _currentNode!.children.length > 1)
+                  SizedBox(
+                    width: 120,
+                    child: DropdownButtonFormField<int>(
+                      initialValue: _selectedVariation.clamp(
+                        0,
+                        _currentNode!.children.length - 1,
                       ),
+                      items: List<DropdownMenuItem<int>>.generate(
+                        _currentNode!.children.length,
+                        (int i) => DropdownMenuItem<int>(
+                          value: i,
+                          child: Text('变着${i + 1}'),
+                        ),
+                      ),
+                      onChanged: (int? v) {
+                        if (v == null) return;
+                        setState(() => _selectedVariation = v);
+                      },
                     ),
-                    onChanged: (int? v) {
-                      if (v == null) {
-                        return;
-                      }
-                      setState(() {
-                        _selectedVariation = v;
-                      });
-                    },
+                  ),
+                IconButton(
+                  onPressed: (_currentNode != null &&
+                          _currentNode!.children.isNotEmpty)
+                      ? _next
+                      : null,
+                  icon: const Icon(Icons.chevron_right),
+                ),
+              ],
+            ),
+            bottomChild: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                FilledButton.icon(
+                  onPressed: _analyzing ? null : _analyzeWinrates,
+                  icon: _analyzing
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.analytics_outlined),
+                  label: const Text('分析每步胜率'),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 180,
+                  child: WinrateChart(
+                    winrates: _winrates,
+                    maxTurn: _currentLine().length,
                   ),
                 ),
-              IconButton(
-                onPressed:
-                    (_currentNode != null && _currentNode!.children.isNotEmpty)
-                    ? _next
-                    : null,
-                icon: const Icon(Icons.chevron_right),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          FilledButton.icon(
-            onPressed: _analyzing ? null : _analyzeWinrates,
-            icon: _analyzing
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.analytics_outlined),
-            label: const Text('分析每步胜率'),
-          ),
-          const SizedBox(height: 10),
-          SizedBox(
-            height: 180,
-            child: WinrateChart(
-              winrates: _winrates,
-              maxTurn: _currentLine().length,
+                if (_winrates.containsKey(_currentTurn))
+                  Text(
+                    '第$_currentTurn手胜率: ${(_winrates[_currentTurn]! * 100).toStringAsFixed(1)}%',
+                  ),
+              ],
             ),
           ),
-          if (_winrates.containsKey(_currentTurn))
-            Text(
-              '第$_currentTurn手胜率: ${(_winrates[_currentTurn]! * 100).toStringAsFixed(1)}%',
-            ),
         ],
         if (_status != null) ...<Widget>[
           const SizedBox(height: 8),

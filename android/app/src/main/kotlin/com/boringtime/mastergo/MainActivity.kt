@@ -190,6 +190,7 @@ class MainActivity : FlutterActivity() {
             val ruleset = call.argument<String>("ruleset") ?: "chinese"
             val moveTokens = call.argument<List<String>>("moves") ?: emptyList()
             val initialStones = call.argument<List<String>>("initialStones") ?: emptyList()
+            val includeOwnership = call.argument<Boolean>("includeOwnership") ?: false
 
             val queryObj = JSONObject().apply {
                 put("id", queryId)
@@ -200,6 +201,7 @@ class MainActivity : FlutterActivity() {
                 put("maxVisits", maxVisits)
                 put("moves", parseTokenArray(moveTokens))
                 put("initialStones", parseTokenArray(initialStones))
+                put("includeOwnership", includeOwnership)
             }
             val query = queryObj.toString()
 
@@ -242,16 +244,24 @@ class MainActivity : FlutterActivity() {
             } else {
                 "pass"
             }
+            val ownershipList = mutableListOf<Double>()
+            rootInfo?.optJSONArray("ownership")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    ownershipList.add(arr.optDouble(i, 0.0))
+                }
+            }
 
-            result.success(
-                mapOf(
-                    "queryId" to queryId,
-                    "bestMove" to bestMove,
-                    "winrate" to winrate,
-                    "scoreLead" to scoreLead,
-                    "rawResponse" to response.toString()
-                )
+            val resultMap = mutableMapOf<String, Any?>(
+                "queryId" to queryId,
+                "bestMove" to bestMove,
+                "winrate" to winrate,
+                "scoreLead" to scoreLead,
+                "rawResponse" to response.toString()
             )
+            if (ownershipList.isNotEmpty()) {
+                resultMap["ownership"] = ownershipList
+            }
+            result.success(resultMap)
         } catch (e: Exception) {
             result.error("ANALYZE_FAILED", e.message, null)
         }

@@ -174,8 +174,9 @@ import Darwin
     let ruleset = (args["ruleset"] as? String) ?? "chinese"
     let moves = (args["moves"] as? [String]) ?? []
     let initialStones = (args["initialStones"] as? [String]) ?? []
+    let includeOwnership = (args["includeOwnership"] as? Bool) ?? false
 
-    let payload: [String: Any] = [
+    var payload: [String: Any] = [
       "id": queryId,
       "rules": ruleset,
       "komi": komi,
@@ -185,6 +186,7 @@ import Darwin
       "moves": parseTokenArray(tokens: moves),
       "initialStones": parseTokenArray(tokens: initialStones),
     ]
+    payload["includeOwnership"] = includeOwnership
 
     do {
       let data = try JSONSerialization.data(withJSONObject: payload)
@@ -227,13 +229,17 @@ import Darwin
       let scoreLead = (rootInfo?["scoreLead"] as? NSNumber)?.doubleValue ?? 0.0
       let bestMove = (moveInfos?.first?["move"] as? String) ?? "pass"
 
-      result([
+      var resultMap: [String: Any] = [
         "queryId": queryId,
         "bestMove": bestMove,
         "winrate": winrate,
         "scoreLead": scoreLead,
         "rawResponse": response
-      ])
+      ]
+      if let ownershipAny = rootInfo?["ownership"] as? [Any] {
+        resultMap["ownership"] = ownershipAny.compactMap { ($0 as? NSNumber)?.doubleValue }
+      }
+      result(resultMap)
     } catch {
       result(FlutterError(code: "ANALYZE_FAILED", message: error.localizedDescription, details: nil))
     }

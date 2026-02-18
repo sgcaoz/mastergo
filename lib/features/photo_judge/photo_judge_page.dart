@@ -2,13 +2,13 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:mastergo/domain/entities/analysis_profile.dart';
 import 'package:mastergo/domain/entities/game_setup.dart';
 import 'package:mastergo/domain/entities/rule_presets.dart';
 import 'package:mastergo/domain/go/go_types.dart';
 import 'package:mastergo/features/common/go_board_widget.dart';
+import 'package:mastergo/features/photo_judge/go_board_recognizer_opencv.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
 
 class PhotoJudgePage extends StatefulWidget {
@@ -31,7 +31,8 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
   );
 
   XFile? _photo;
-  _RecognizedBoard? _recognized;
+  Uint8List? _photoBytes;
+  RecognizedBoard? _recognized;
   int _boardSize = 19;
   String _ruleset = 'chinese';
   GoStone _toPlay = GoStone.black;
@@ -53,8 +54,10 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
     if (x == null) {
       return;
     }
+    final Uint8List bytes = await x.readAsBytes();
     setState(() {
       _photo = x;
+      _photoBytes = bytes;
       _recognized = null;
       _hintPoints = <GoPoint>[];
       _hintSummary = null;
@@ -69,8 +72,10 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
     if (x == null) {
       return;
     }
+    final Uint8List bytes = await x.readAsBytes();
     setState(() {
       _photo = x;
+      _photoBytes = bytes;
       _recognized = null;
       _hintPoints = <GoPoint>[];
       _hintSummary = null;
@@ -81,25 +86,32 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
   }
 
   Future<void> _recognizeBoard() async {
-    if (_photo == null) {
+    final Uint8List? bytes = _photoBytes ?? (_photo != null ? await _photo!.readAsBytes() : null);
+    if (bytes == null) {
       return;
+    }
+    if (_photo != null && _photoBytes == null) {
+      setState(() => _photoBytes = bytes);
     }
     setState(() {
       _loading = true;
     });
     try {
-      final Uint8List bytes = await _photo!.readAsBytes();
-      final img.Image? source = img.decodeImage(bytes);
-      if (source == null) {
-        throw StateError('图片解码失败');
+      final RecognizedBoard? board = recognizeGoBoardFromBytes(bytes, _boardSize);
+      if (board == null) {
+        setState(() {
+          _recognized = null;
+          _status = '未能检测到棋盘，请确保画面包含完整棋盘并重试';
+        });
+        return;
       }
-      final _RecognizedBoard board = _recognizeFromImage(source, _boardSize);
       setState(() {
         _recognized = board;
         _status = '识别完成：黑${board.blackCount}，白${board.whiteCount}';
       });
     } catch (e) {
       setState(() {
+        _recognized = null;
         _status = '识别失败: $e';
       });
     } finally {
@@ -111,85 +123,8 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
     }
   }
 
-  _RecognizedBoard _recognizeFromImage(img.Image image, int boardSize) {
-    final int width = image.width;
-    final int height = image.height;
-    final int side = (width < height ? width : height) * 82 ~/ 100;
-    final int left = (width - side) ~/ 2;
-    final int top = (height - side) ~/ 2;
-    final double spacing = side / (boardSize - 1);
-    final List<List<GoStone?>> board = List<List<GoStone?>>.generate(
-      boardSize,
-      (_) => List<GoStone?>.filled(boardSize, null),
-    );
-
-    double lumaAt(int x, int y) {
-      final int clampedX = x.clamp(0, width - 1);
-      final int clampedY = y.clamp(0, height - 1);
-      final img.Pixel p = image.getPixel(clampedX, clampedY);
-      return 0.299 * p.r + 0.587 * p.g + 0.114 * p.b;
-    }
-
-    for (int y = 0; y < boardSize; y++) {
-      for (int x = 0; x < boardSize; x++) {
-        final double cx = left + x * spacing;
-        final double cy = top + y * spacing;
-        double center = 0;
-        int centerN = 0;
-        for (int dy = -1; dy <= 1; dy++) {
-          for (int dx = -1; dx <= 1; dx++) {
-            center += lumaAt((cx + dx).round(), (cy + dy).round());
-            centerN++;
-          }
-        }
-        center /= centerN;
-
-        final double r = spacing * 0.35;
-        const List<Offset> dirs = <Offset>[
-          Offset(1, 0),
-          Offset(-1, 0),
-          Offset(0, 1),
-          Offset(0, -1),
-          Offset(0.7, 0.7),
-          Offset(-0.7, -0.7),
-          Offset(0.7, -0.7),
-          Offset(-0.7, 0.7),
-        ];
-        double ring = 0;
-        for (final Offset d in dirs) {
-          ring += lumaAt((cx + d.dx * r).round(), (cy + d.dy * r).round());
-        }
-        ring /= dirs.length;
-
-        if (center < ring - 28) {
-          board[y][x] = GoStone.black;
-        } else if (center > ring + 22) {
-          board[y][x] = GoStone.white;
-        }
-      }
-    }
-
-    int b = 0;
-    int w = 0;
-    for (int y = 0; y < boardSize; y++) {
-      for (int x = 0; x < boardSize; x++) {
-        if (board[y][x] == GoStone.black) {
-          b++;
-        } else if (board[y][x] == GoStone.white) {
-          w++;
-        }
-      }
-    }
-    return _RecognizedBoard(
-      boardSize: boardSize,
-      board: board,
-      blackCount: b,
-      whiteCount: w,
-    );
-  }
-
   Future<void> _analyzePosition() async {
-    final _RecognizedBoard? r = _recognized;
+    final RecognizedBoard? r = _recognized;
     if (r == null) {
       return;
     }
@@ -306,7 +241,7 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
 
   @override
   Widget build(BuildContext context) {
-    final _RecognizedBoard? r = _recognized;
+    final RecognizedBoard? r = _recognized;
     return Scaffold(
       appBar: AppBar(title: const Text('拍照判断')),
       body: ListView(
@@ -411,8 +346,25 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
               ),
             ],
           ),
-          if (r != null) ...<Widget>[
+          if (_photoBytes != null) ...<Widget>[
             const SizedBox(height: 12),
+            const Text('您选择的图片', style: TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 6),
+            Center(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.memory(
+                  _photoBytes!,
+                  fit: BoxFit.contain,
+                  height: 280,
+                ),
+              ),
+            ),
+          ],
+          if (r != null) ...<Widget>[
+            const SizedBox(height: 16),
+            const Text('识别结果（棋盘）', style: TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 6),
             SizedBox(
               height: 360,
               child: GoBoardWidget(
@@ -438,20 +390,6 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
       ),
     );
   }
-}
-
-class _RecognizedBoard {
-  const _RecognizedBoard({
-    required this.boardSize,
-    required this.board,
-    required this.blackCount,
-    required this.whiteCount,
-  });
-
-  final int boardSize;
-  final List<List<GoStone?>> board;
-  final int blackCount;
-  final int whiteCount;
 }
 
 class _HintItem {

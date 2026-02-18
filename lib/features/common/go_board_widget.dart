@@ -3,6 +3,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:mastergo/domain/go/go_types.dart';
 
+/// 默认棋盘背景色（木色）；可通过 [GoBoardWidget.boardBackgroundColor] 覆盖。
+const Color kDefaultBoardBackgroundColor = Color(0xFFDEB877);
+
 class GoBoardWidget extends StatelessWidget {
   const GoBoardWidget({
     super.key,
@@ -14,6 +17,8 @@ class GoBoardWidget extends StatelessWidget {
     this.tentativePoint,
     this.tentativeStone,
     this.hintPoints = const <GoPoint>[],
+    this.ownership,
+    this.boardBackgroundColor,
   });
 
   final int boardSize;
@@ -24,6 +29,9 @@ class GoBoardWidget extends StatelessWidget {
   final GoPoint? tentativePoint;
   final GoStone? tentativeStone;
   final List<GoPoint> hintPoints;
+  /// Per-point ownership from KataGo: row-major, -1 = black, 1 = white. Length boardSize². Drawn as tint overlay.
+  final List<double>? ownership;
+  final Color? boardBackgroundColor;
 
   @override
   Widget build(BuildContext context) {
@@ -58,6 +66,8 @@ class GoBoardWidget extends StatelessWidget {
                   tentativePoint: tentativePoint,
                   tentativeStone: tentativeStone,
                   hintPoints: hintPoints,
+                  ownership: ownership,
+                  boardBackgroundColor: boardBackgroundColor ?? kDefaultBoardBackgroundColor,
                 ),
               ),
             ),
@@ -91,6 +101,8 @@ class _GoBoardPainter extends CustomPainter {
     required this.tentativePoint,
     required this.tentativeStone,
     required this.hintPoints,
+    required this.boardBackgroundColor,
+    this.ownership,
   });
 
   final int boardSize;
@@ -100,10 +112,12 @@ class _GoBoardPainter extends CustomPainter {
   final GoPoint? tentativePoint;
   final GoStone? tentativeStone;
   final List<GoPoint> hintPoints;
+  final Color boardBackgroundColor;
+  final List<double>? ownership;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Paint bgPaint = Paint()..color = const Color(0xFFDEB877);
+    final Paint bgPaint = Paint()..color = boardBackgroundColor;
     canvas.drawRect(Offset.zero & size, bgPaint);
 
     if (boardSize <= 1) {
@@ -111,6 +125,34 @@ class _GoBoardPainter extends CustomPainter {
     }
     final double gridSize = size.width - padding * 2;
     final double spacing = gridSize / (boardSize - 1);
+
+    // 完整背景灰度：每格整格填满，-1 黑 0 灰 1 白，全盘可见
+    if (ownership != null && ownership!.length >= boardSize * boardSize) {
+      // 提高灰度对比和可见性，避免“看不出势力图”
+      const Color blackFill = Color(0xF0101010);
+      const Color whiteFill = Color(0xF0F4F4F4);
+      const Color uncertainFill = Color(0xF0949494);
+      for (int y = 0; y < boardSize; y++) {
+        for (int x = 0; x < boardSize; x++) {
+          final int idx = y * boardSize + x;
+          final double v = ownership![idx].clamp(-1.0, 1.0);
+          final Color color;
+          if (v.abs() < 0.08) {
+            color = uncertainFill;
+          } else {
+            final double t = (v + 1) * 0.5;
+            color = Color.lerp(blackFill, whiteFill, t)!;
+          }
+          final double left = x == 0 ? 0 : padding + (x - 0.5) * spacing;
+          final double top = y == 0 ? 0 : padding + (y - 0.5) * spacing;
+          final double right = x == boardSize - 1 ? size.width : padding + (x + 0.5) * spacing;
+          final double bottom = y == boardSize - 1 ? size.height : padding + (y + 0.5) * spacing;
+          final Paint paint = Paint()..color = color;
+          canvas.drawRect(Rect.fromLTRB(left, top, right, bottom), paint);
+        }
+      }
+    }
+
     final Paint linePaint = Paint()
       ..color = const Color(0xFF5B3A29)
       ..strokeWidth = 1;
@@ -289,6 +331,7 @@ class _GoBoardPainter extends CustomPainter {
         oldDelegate.lastMovePoint != lastMovePoint ||
         oldDelegate.tentativePoint != tentativePoint ||
         oldDelegate.tentativeStone != tentativeStone ||
-        oldDelegate.hintPoints != hintPoints;
+        oldDelegate.hintPoints != hintPoints ||
+        oldDelegate.ownership != ownership;
   }
 }
