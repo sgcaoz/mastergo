@@ -64,7 +64,7 @@ void showOwnershipResultSheet(
               const Padding(
                 padding: EdgeInsets.only(top: 4),
                 child: Text(
-                  '深色=黑势力  浅色=白势力  灰=不明',
+                  '深黑/浅黑=黑势力  深白/浅白=白势力  黄=不明',
                   style: TextStyle(fontSize: 12, color: Colors.black54),
                 ),
               ),

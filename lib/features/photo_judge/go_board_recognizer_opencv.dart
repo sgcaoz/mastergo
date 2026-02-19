@@ -3,6 +3,137 @@ import 'dart:typed_data';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 import 'package:mastergo/domain/go/go_types.dart';
 
+/// 支持的棋盘尺寸，用于自动检测时在候选中选择。
+const List<int> kSupportedBoardSizes = <int>[19, 13, 9];
+
+/// 不选棋盘尺寸时使用：先定位棋盘并透视校正，再根据网格周期推断 9/13/19。
+RecognizedBoard? recognizeGoBoardFromBytesAutoSize(Uint8List imageBytes) {
+  if (imageBytes.isEmpty) return null;
+  cv.Mat? frame;
+  cv.Mat? gray;
+  cv.Mat? blurred;
+  cv.Mat? canny;
+  cv.Mat? birdsEye;
+  cv.Mat? transformM;
+  try {
+    frame = cv.imdecode(imageBytes, cv.IMREAD_COLOR);
+    if (frame.isEmpty) return null;
+    gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY);
+    blurred = cv.gaussianBlur(gray, (5, 5), 0);
+    canny = cv.canny(blurred, 50, 150);
+    const int mode = 0;
+    const int method = 2;
+    final (cv.Contours contours, _) = cv.findContours(canny, mode, method);
+    final int imgW = frame.cols;
+    final int imgH = frame.rows;
+    final double imgArea = (imgW * imgH).toDouble();
+    double bestScore = -1;
+    List<cv.Point>? ordered;
+    for (int i = 0; i < contours.length; i++) {
+      final cv.VecPoint c = contours.elementAt(i);
+      final double len = cv.arcLength(c, true);
+      if (len < 100) continue;
+      final double epsilon = len * 0.02;
+      final cv.VecPoint approx = cv.approxPolyDP(c, epsilon, true);
+      if (approx.length == 4) {
+        final List<cv.Point> candidate = _orderFourPoints(approx);
+        final _QuadMetrics m = _quadMetrics(candidate);
+        const int edgeMargin = 10;
+        final bool nearImageEdge =
+            m.minX <= edgeMargin ||
+            m.minY <= edgeMargin ||
+            m.maxX >= imgW - edgeMargin ||
+            m.maxY >= imgH - edgeMargin;
+        if (nearImageEdge) continue;
+        final double areaRatio = m.area / imgArea;
+        if (areaRatio < 0.08 || areaRatio > 0.95) continue;
+        if (m.aspect < 0.65 || m.aspect > 1.55) continue;
+        final double squarePenalty = 1.0 - (m.aspect - 1.0).abs().clamp(0.0, 1.0);
+        final double score = areaRatio * 1000 + squarePenalty * 120 + len * 0.02;
+        if (score > bestScore) {
+          bestScore = score;
+          ordered = candidate;
+        }
+      }
+    }
+    if (ordered == null || ordered.length != 4) return null;
+    const int outSize = 640;
+    final cv.VecPoint srcPoints = cv.VecPoint.fromList(ordered);
+    final cv.VecPoint dstPoints = cv.VecPoint.fromList([
+      cv.Point(0, 0),
+      cv.Point(outSize, 0),
+      cv.Point(outSize, outSize),
+      cv.Point(0, outSize),
+    ]);
+    transformM = cv.getPerspectiveTransform(srcPoints, dstPoints);
+    birdsEye = cv.warpPerspective(frame, transformM, (outSize, outSize));
+    final cv.Mat warpedGray = cv.cvtColor(birdsEye, cv.COLOR_BGR2GRAY);
+    final int detected = _detectBoardSizeFromWarped(warpedGray);
+    warpedGray.dispose();
+    if (detected < 5) return null;
+    return recognizeGoBoardFromBytes(imageBytes, detected);
+  } catch (_) {
+    return null;
+  } finally {
+    frame?.dispose();
+    gray?.dispose();
+    blurred?.dispose();
+    canny?.dispose();
+    birdsEye?.dispose();
+    transformM?.dispose();
+  }
+}
+
+/// 从透视校正后的灰度图推断棋盘路数：根据行/列方向的暗线间隔计算，取 9/13/19 中最近值。
+int _detectBoardSizeFromWarped(cv.Mat gray) {
+  const int borderPx = 26;
+  const int outSize = 640;
+  final int inner = outSize - 2 * borderPx;
+  if (gray.rows < outSize || gray.cols < outSize) return 0;
+  final List<double> rowProfile = <double>[];
+  for (int x = borderPx; x < outSize - borderPx; x++) {
+    double sum = 0;
+    for (int y = borderPx; y < outSize - borderPx; y++) {
+      final List<num> p = gray.atPixel(y, x);
+      sum += p.isEmpty ? 0 : p[0].toDouble();
+    }
+    rowProfile.add(sum);
+  }
+  final double mean = rowProfile.reduce((double a, double b) => a + b) / rowProfile.length;
+  final List<int> valleys = <int>[];
+  for (int i = 2; i < rowProfile.length - 2; i++) {
+    final double v = rowProfile[i];
+    if (v < mean && v < rowProfile[i - 1] && v < rowProfile[i + 1] &&
+        v <= rowProfile[i - 2] && v <= rowProfile[i + 2]) {
+      valleys.add(i);
+    }
+  }
+  int period = inner;
+  if (valleys.length >= 2) {
+    int sumGap = 0;
+    int count = 0;
+    for (int i = 1; i < valleys.length; i++) {
+      sumGap += valleys[i] - valleys[i - 1];
+      count++;
+    }
+    if (count > 0) {
+      period = sumGap ~/ count;
+    }
+  }
+  if (period < 5) period = inner ~/ 18;
+  final int n = (inner / period).round() + 1;
+  int best = 19;
+  int bestDiff = (n - 19).abs();
+  for (final int size in kSupportedBoardSizes) {
+    final int d = (n - size).abs();
+    if (d < bestDiff) {
+      bestDiff = d;
+      best = size;
+    }
+  }
+  return best;
+}
+
 /// 基于棋盘边界与线条的识别：不依赖棋盘颜色。
 /// 流程：灰度 → 边缘检测 → 轮廓 → 最大四边形即棋盘 → 透视校正 → 等分网格 → 交叉点局部采样判棋子。
 RecognizedBoard? recognizeGoBoardFromBytes(Uint8List imageBytes, int boardSize) {

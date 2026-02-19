@@ -18,6 +18,7 @@ import 'package:mastergo/features/common/review_board_panel.dart';
 import 'package:mastergo/features/common/winrate_chart.dart';
 import 'package:mastergo/infra/config/ai_profile_repository.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
+import 'package:mastergo/infra/sound/stone_sound.dart';
 import 'package:mastergo/infra/storage/game_record_repository.dart';
 
 class AIPlayPage extends StatefulWidget {
@@ -493,6 +494,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     }
 
     final GoGameState next = _game!.play(probe);
+    playStoneSound();
     setState(() {
       _applyGame(next);
       _pendingPoint = null;
@@ -608,6 +610,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
       if (aiPoint != null) {
         try {
           next = next.play(GoMove(player: _aiStone, point: aiPoint));
+          playStoneSound();
         } catch (_) {
           final List<GoPoint> legal = next
               .legalMovesForCurrentPlayer()
@@ -615,6 +618,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
           if (legal.isNotEmpty) {
             final GoPoint fallback = legal[Random().nextInt(legal.length)];
             next = next.play(GoMove(player: _aiStone, point: fallback));
+            playStoneSound();
           } else {
             next = next.play(GoMove(player: _aiStone, isPass: true));
           }
@@ -1335,8 +1339,8 @@ class _AIBattlePageState extends State<_AIBattlePage> {
       id: '${profile.id}-ownership-fast',
       name: profile.name,
       description: profile.description,
-      maxVisits: 5,
-      thinkingTimeMs: min(profile.thinkingTimeMs, 300),
+      maxVisits: 20,
+      thinkingTimeMs: 1000,
       includeOwnership: true,
     );
     final int timeoutMs = max(_timeoutBudgetMsForProfile(ownershipProfile), 30000);
@@ -1514,6 +1518,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                             reviewHints = <GoPoint>[];
                             reviewHintSummary = null;
                           });
+                          playStoneSound();
                         } catch (_) {}
                       },
                       onRequestHint: () async {
@@ -1552,6 +1557,9 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                           }
                         }
                       },
+                      currentTurn: turn,
+                      maxTurn: max((_game?.moves.length ?? 1), 1),
+                      winrates: _winrateByTurn,
                       turnNavigation: Row(
                         children: <Widget>[
                           IconButton(
@@ -1586,13 +1594,6 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                                 exitTryAndClearHints();
                               });
                             },
-                          ),
-                          SizedBox(
-                            height: 180,
-                            child: WinrateChart(
-                              winrates: _winrateByTurn,
-                              maxTurn: max((_game?.moves.length ?? 1), 1),
-                            ),
                           ),
                           if (_winrateByTurn.containsKey(turn))
                             Padding(
@@ -1650,9 +1651,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
         style: OutlinedButton.styleFrom(
           visualDensity: VisualDensity.compact,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          minimumSize: Size.zero,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          textStyle: const TextStyle(fontSize: 12),
         ),
         onPressed: onPressed,
         child: Text(label),

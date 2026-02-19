@@ -31,11 +31,17 @@ class GameAnalysisService {
     List<String> initialStones = const <String>[],
     int? timeoutMs,
     void Function(int turn, int total)? onProgress,
+    int startTurn = 0,
+    int? maxTurnsToAnalyze,
   }) async {
     await adapter.ensureStarted();
     final Map<int, double> winrates = <int, double>{};
     final rules = rulePresetFromString(ruleset).toGameRules(komi: komi);
-    for (int turn = 0; turn <= moveTokens.length; turn++) {
+    final int endTurn = maxTurnsToAnalyze == null
+        ? moveTokens.length
+        : (startTurn + maxTurnsToAnalyze - 1).clamp(0, moveTokens.length);
+
+    for (int turn = startTurn; turn <= endTurn; turn++) {
       final KatagoAnalyzeResult res = await adapter.analyze(
         KatagoAnalyzeRequest(
           queryId: 'ana-$turn-${DateTime.now().millisecondsSinceEpoch}',

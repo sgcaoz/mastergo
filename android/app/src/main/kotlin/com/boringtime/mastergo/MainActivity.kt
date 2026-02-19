@@ -245,7 +245,8 @@ class MainActivity : FlutterActivity() {
                 "pass"
             }
             val ownershipList = mutableListOf<Double>()
-            rootInfo?.optJSONArray("ownership")?.let { arr ->
+            // Fix: ownership is a top-level field, not inside rootInfo
+            response.optJSONArray("ownership")?.let { arr ->
                 for (i in 0 until arr.length()) {
                     ownershipList.add(arr.optDouble(i, 0.0))
                 }

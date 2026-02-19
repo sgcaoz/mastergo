@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mastergo/domain/go/go_game.dart';
 import 'package:mastergo/domain/go/go_types.dart';
 import 'package:mastergo/features/common/go_board_widget.dart';
+import 'package:mastergo/features/common/winrate_chart.dart';
 
 /// 复盘与打谱共用的棋盘操作区：棋盘 + 试下/结束试下/提示/局势分析 + 可选手数导航与底部内容。
 /// 通过参数区分场景，避免两处重复实现。
@@ -20,6 +21,10 @@ class ReviewBoardPanel extends StatelessWidget {
     this.onTryPlay,
     this.title,
     this.turnNavigation,
+    this.currentTurn,
+    this.maxTurn,
+    this.winrates,
+    this.onTurnSelected,
     this.bottomChild,
     this.hintLoading = false,
     this.ownershipLoading = false,
@@ -54,7 +59,15 @@ class ReviewBoardPanel extends StatelessWidget {
   final String? title;
   /// 可选手数/步数导航行（如「上一手 / 当前手数 / 下一手」或带变着下拉）
   final Widget? turnNavigation;
-  /// 可选底部内容（胜率图、妙手恶手、SGF 等）
+  /// 仅用于复盘场景：当前手数（用于胜率图高亮）
+  final int? currentTurn;
+  /// 仅用于复盘场景：最大手数（用于胜率图 X 轴范围）
+  final int? maxTurn;
+  /// 仅用于复盘场景：胜率数据
+  final Map<int, double>? winrates;
+  /// 拖动胜率图竖线时回调，用于快速跳转手数
+  final ValueChanged<int>? onTurnSelected;
+  /// 可选底部内容（妙手恶手、SGF 等）
   final Widget? bottomChild;
   /// 棋盘区域高度
   final double boardHeight;
@@ -82,14 +95,11 @@ class ReviewBoardPanel extends StatelessWidget {
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: <Widget>[
             OutlinedButton(
-              onPressed: tryMode ? null : onEnterTry,
-              child: const Text('试下'),
-            ),
-            OutlinedButton(
-              onPressed: tryMode ? onExitTry : null,
-              child: const Text('结束试下'),
+              onPressed: tryMode ? onExitTry : onEnterTry,
+              child: Text(tryMode ? '结束试下' : '试下'),
             ),
             OutlinedButton(
               onPressed: hintLoading ? null : onRequestHint,
@@ -118,6 +128,18 @@ class ReviewBoardPanel extends StatelessWidget {
           Text(
             '提示胜率: $hintSummary',
             style: const TextStyle(fontSize: 12),
+          ),
+        ],
+        if (winrates != null && maxTurn != null) ...<Widget>[
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 100,
+            child: WinrateChart(
+              winrates: winrates!,
+              maxTurn: maxTurn!,
+              highlightTurn: currentTurn,
+              onTurnSelected: onTurnSelected,
+            ),
           ),
         ],
         if (turnNavigation != null) ...<Widget>[

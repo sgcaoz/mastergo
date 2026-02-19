@@ -25,18 +25,18 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
     id: 'photo-judge',
     name: '拍照判断',
     description: '轻量分析',
-    maxVisits: 10,
+    maxVisits: 2,
     thinkingTimeMs: 400,
-    includeOwnership: false,
+    includeOwnership: true,
   );
+  /// 用 ownership 判断终局：必须所有点 |ownership| 都大于此阈值才是终局。
+  static const double _ownershipEndgameThreshold = 0.5;
 
   XFile? _photo;
   Uint8List? _photoBytes;
   RecognizedBoard? _recognized;
-  int _boardSize = 19;
   String _ruleset = 'chinese';
   GoStone _toPlay = GoStone.black;
-  bool _isEndgame = false;
   bool _loading = false;
   String? _status;
   List<GoPoint> _hintPoints = <GoPoint>[];
@@ -97,7 +97,7 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
       _loading = true;
     });
     try {
-      final RecognizedBoard? board = recognizeGoBoardFromBytes(bytes, _boardSize);
+      final RecognizedBoard? board = recognizeGoBoardFromBytesAutoSize(bytes);
       if (board == null) {
         setState(() {
           _recognized = null;
@@ -123,6 +123,8 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
     }
   }
 
+  /// 分析局面：始终基于当前选择的规则（_ruleset）和先后手（_toPlay），
+  /// 与拍照/相册时机无关。流程为：拍照识别 → 可选调整规则与先后手 → 点击分析。
   Future<void> _analyzePosition() async {
     final RecognizedBoard? r = _recognized;
     if (r == null) {
@@ -147,6 +149,7 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
           initialStones.add('${s.sgfColor}:${m.toGtp(r.boardSize)}');
         }
       }
+      // 使用当前界面选择的规则与先后手，非拍照时固定
       final RulePreset preset = rulePresetFromString(_ruleset);
       final KatagoAnalyzeResult res = await _adapter.analyze(
         KatagoAnalyzeRequest(
@@ -161,6 +164,7 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
           ),
           rules: preset.toGameRules(),
           profile: _analysisProfile,
+          includeOwnership: true,
           timeoutMs: 60000,
         ),
       );
@@ -187,7 +191,8 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
                         '${h.move}:${(h.playerWin * 100).toStringAsFixed(1)}%',
                   )
                   .join('  ');
-        _judgeText = _isEndgame
+        final bool likelyEndgame = _isEndgameByOwnership(res.ownership, r.boardSize);
+        _judgeText = likelyEndgame
             ? '终局判断：黑子${r.blackCount}，白子${r.whiteCount}；$winner，$lead'
             : '中盘判断：$winner，$lead；当前执棋方胜率${(toPlayWin * 100).toStringAsFixed(1)}%';
         _status = '分析完成';
@@ -203,6 +208,30 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
         });
       }
     }
+  }
+
+  /// 规则或先后手变更后清除上次分析结果，避免界面显示与当前选择不一致。
+  void _clearAnalysisResult() {
+    _hintPoints = <GoPoint>[];
+    _hintSummary = null;
+    _judgeText = null;
+    if (_recognized != null && _status == '分析完成') {
+      _status = '已识别；请点击「分析局面」按当前规则与先后手重新分析';
+    }
+  }
+
+  /// 根据引擎返回的 ownership 判断是否终局：必须所有点 |ownership| 都 > 0.5 才是终局。
+  bool _isEndgameByOwnership(List<double>? ownership, int boardSize) {
+    if (ownership == null || ownership.length < boardSize * boardSize) {
+      return false;
+    }
+    final int total = boardSize * boardSize;
+    for (int i = 0; i < total && i < ownership.length; i++) {
+      if (ownership[i].abs() <= _ownershipEndgameThreshold) {
+        return false;
+      }
+    }
+    return true;
   }
 
   _HintItem? Function(KatagoMoveCandidate) _toHintItem(int boardSize) {
@@ -250,30 +279,10 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
           Row(
             children: <Widget>[
               Expanded(
-                child: DropdownButtonFormField<int>(
-                  initialValue: _boardSize,
-                  items: const <DropdownMenuItem<int>>[
-                    DropdownMenuItem(value: 9, child: Text('9路')),
-                    DropdownMenuItem(value: 13, child: Text('13路')),
-                    DropdownMenuItem(value: 19, child: Text('19路')),
-                  ],
-                  onChanged: (int? v) {
-                    if (v != null) {
-                      setState(() {
-                        _boardSize = v;
-                      });
-                    }
-                  },
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    labelText: '棋盘尺寸',
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
                 child: DropdownButtonFormField<String>(
-                  initialValue: _ruleset,
+                  initialValue: kRulePresets.any((RulePreset p) => p.id == _ruleset)
+                      ? _ruleset
+                      : kRulePresets.first.id,
                   items: kRulePresets
                       .map(
                         (RulePreset p) => DropdownMenuItem<String>(
@@ -286,6 +295,7 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
                     if (v != null) {
                       setState(() {
                         _ruleset = v;
+                        _clearAnalysisResult();
                       });
                     }
                   },
@@ -293,13 +303,10 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
                     border: OutlineInputBorder(),
                     labelText: '规则',
                   ),
+                  isExpanded: true,
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: <Widget>[
+              const SizedBox(width: 8),
               Expanded(
                 child: SegmentedButton<GoStone>(
                   segments: const <ButtonSegment<GoStone>>[
@@ -310,16 +317,9 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
                   onSelectionChanged: (Set<GoStone> s) {
                     setState(() {
                       _toPlay = s.first;
+                      _clearAnalysisResult();
                     });
                   },
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: SwitchListTile(
-                  title: const Text('终局'),
-                  value: _isEndgame,
-                  onChanged: (bool v) => setState(() => _isEndgame = v),
                 ),
               ),
             ],
@@ -376,15 +376,15 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
           ],
           if (_judgeText != null) ...<Widget>[
             const SizedBox(height: 8),
-            Text(_judgeText!),
+            Text(_judgeText!, maxLines: 3, overflow: TextOverflow.ellipsis),
           ],
           if (_hintSummary != null) ...<Widget>[
             const SizedBox(height: 6),
-            Text('提示落子: $_hintSummary'),
+            Text('提示落子: $_hintSummary', maxLines: 2, overflow: TextOverflow.ellipsis),
           ],
           if (_status != null) ...<Widget>[
             const SizedBox(height: 8),
-            Text(_status!),
+            Text(_status!, maxLines: 2, overflow: TextOverflow.ellipsis),
           ],
         ],
       ),

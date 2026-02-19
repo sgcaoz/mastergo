@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Directory, File, FileSystemEntity;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:mastergo/application/analysis/game_analysis_service.dart';
 import 'package:mastergo/domain/entities/analysis_profile.dart';
@@ -18,6 +20,7 @@ import 'package:mastergo/features/common/review_board_panel.dart';
 import 'package:mastergo/features/common/winrate_chart.dart';
 import 'package:mastergo/infra/config/master_game_repository.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
+import 'package:mastergo/infra/sound/stone_sound.dart';
 import 'package:mastergo/infra/storage/game_record_repository.dart';
 
 class RecordReviewPage extends StatefulWidget {
@@ -61,6 +64,16 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     description: '低参数逐手胜率',
     maxVisits: 10,
     thinkingTimeMs: 400,
+    includeOwnership: false,
+  );
+  /// 分析当前胜率默认用低 visits，避免超时；若对局/复盘选了更高参数可在此覆盖。
+  static const int _defaultCurrentWinrateVisits = 5;
+  final AnalysisProfile _currentWinrateProfile = const AnalysisProfile(
+    id: 'review-current-winrate',
+    name: '当前胜率',
+    description: '单点分析',
+    maxVisits: _defaultCurrentWinrateVisits,
+    thinkingTimeMs: 500,
     includeOwnership: false,
   );
 
@@ -490,21 +503,73 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     super.dispose();
   }
 
+  /// 唯一入口：先选文件夹，再在列表中选一个 SGF。优先从下载目录打开以兼容刚下载的文件。
   Future<void> _importSgf() async {
-    final FilePickerResult? picked = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: <String>['sgf'],
-      withData: true,
+    final Directory? downloadsDir = await getDownloadsDirectory();
+    final String? initialDir = downloadsDir?.path;
+    final String? dirPath = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: '选择包含棋谱的文件夹',
+      initialDirectory: initialDir,
     );
-    if (picked == null || picked.files.isEmpty) {
+    if (dirPath == null || dirPath.isEmpty) {
       return;
     }
-    final PlatformFile file = picked.files.first;
-    final String content = String.fromCharCodes(file.bytes ?? <int>[]);
+    final Directory dir = Directory(dirPath);
+    if (!dir.existsSync()) {
+      setState(() => _status = '文件夹不存在');
+      return;
+    }
+    List<FileSystemEntity> entities;
+    try {
+      entities = dir.listSync();
+    } catch (e) {
+      setState(() => _status = '无法读取文件夹: $e');
+      return;
+    }
+    final List<File> sgfFiles = entities
+        .whereType<File>()
+        .where((File f) => f.path.toLowerCase().endsWith('.sgf'))
+        .toList();
+    if (sgfFiles.isEmpty) {
+      setState(() => _status = '该文件夹内没有 SGF 文件');
+      return;
+    }
+    sgfFiles.sort((File a, File b) => a.path.compareTo(b.path));
+    if (!mounted) {
+      return;
+    }
+    final File? chosen = await showDialog<File>(
+      context: context,
+      builder: (BuildContext ctx) {
+        return SimpleDialog(
+          title: const Text('选择棋谱文件'),
+          children: sgfFiles.map((File f) {
+            final String name = f.path.split(RegExp(r'[/\\]')).last;
+            return SimpleDialogOption(
+              onPressed: () => Navigator.of(ctx).pop(f),
+              child: Text(name, overflow: TextOverflow.ellipsis),
+            );
+          }).toList(),
+        );
+      },
+    );
+    if (chosen == null) {
+      return;
+    }
+    String content;
+    try {
+      content = await chosen.readAsString();
+    } catch (e) {
+      setState(() => _status = '读取失败: $e');
+      return;
+    }
+    final String name = chosen.path.split(RegExp(r'[/\\]')).last;
+    await _applyImportedSgf(content, name);
+  }
+
+  Future<void> _applyImportedSgf(String content, String fileName) async {
     if (content.trim().isEmpty) {
-      setState(() {
-        _status = '导入失败：文件为空';
-      });
+      setState(() => _status = '导入失败：文件为空');
       return;
     }
     final SgfGame parsed = _sgfParser.parse(content);
@@ -517,14 +582,14 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _path = <SgfNode>[];
       _selectedVariation = 0;
       _winrates.clear();
-      _status = '已导入 ${file.name}';
+      _status = '已导入 $fileName';
     });
     _recordId = _recordRepository.newId(prefix: 'import');
     _recordSource = 'import';
     await _recordRepository.saveOrUpdateSourceRecord(
       id: _recordId,
       source: _recordSource,
-      title: file.name,
+      title: fileName,
       boardSize: parsed.boardSize,
       ruleset: parsed.rules.isEmpty
           ? _ruleset
@@ -642,20 +707,30 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     return state;
   }
 
-  Future<void> _analyzeWinrates() async {
-    if (_sgf == null) {
-      return;
+  /// 可选：若本谱来自对局且保存了更高 visits，分析当前胜率时可沿用并延长超时。
+  AnalysisProfile? _gameAnalysisProfile;
+
+  /// 分析当前胜率：默认 maxVisits=5；仅当对局传入了更高 visits 时用对局参数，超时随 visits 延长。
+  AnalysisProfile _profileForCurrentWinrate() {
+    if (_gameAnalysisProfile != null &&
+        _gameAnalysisProfile!.maxVisits > _defaultCurrentWinrateVisits) {
+      return _gameAnalysisProfile!;
     }
-    if (_isBattleRecord && _winrates.isNotEmpty) {
-      setState(() {
-        _status = '本机对局已包含每步胜率，无需重新分析';
-      });
+    return _currentWinrateProfile;
+  }
+
+  /// 超时随 visits 延长，避免默认 8s 导致分析当前胜率失败。
+  int _timeoutMsForCurrentWinrate(AnalysisProfile profile) {
+    return (profile.maxVisits * 800).clamp(15000, 90000);
+  }
+
+  Future<void> _analyzeCurrentWinrate() async {
+    if (_sgf == null) {
       return;
     }
     setState(() {
       _analyzing = true;
-      _status = '正在分析...';
-      _winrates.clear();
+      _status = '正在分析当前局面...';
     });
     try {
       final double komi = double.tryParse(_komiController.text) ?? _sgf!.komi;
@@ -664,51 +739,26 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           .map((SgfNode n) => n.move!)
           .map((GoMove m) => m.toProtocolToken(_sgf!.boardSize))
           .toList();
+      final AnalysisProfile profile = _profileForCurrentWinrate();
+      final int timeoutMs = _timeoutMsForCurrentWinrate(profile);
+      // 只分析当前一步
       final Map<int, double> data = await _analysisService.analyzeTurns(
         adapter: _katagoAdapter,
         moveTokens: moveTokens,
         boardSize: _sgf!.boardSize,
         ruleset: _ruleset,
         komi: komi,
-        profile: _isThirdPartyRecord
-            ? _thirdPartyAnalysisProfile
-            : _analysisProfile,
-        timeoutMs: _isThirdPartyRecord ? 60000 : null,
-        onProgress: (int turn, int total) {
-          if (!mounted) {
-            return;
-          }
-          setState(() {
-            _status = '分析中: $turn/$total';
-          });
-        },
+        profile: profile,
+        timeoutMs: timeoutMs,
+        // 只分析当前手
+        startTurn: _currentTurn,
+        maxTurnsToAnalyze: 1,
       );
       if (!mounted) {
         return;
       }
       setState(() {
-        _winrates
-          ..clear()
-          ..addAll(data);
-      });
-      if (_recordId != null) {
-        await _recordRepository.saveOrUpdateSourceRecord(
-          id: _recordId,
-          source: _recordSource,
-          title: _sgf?.gameName ?? 'review',
-          boardSize: _sgf!.boardSize,
-          ruleset: _ruleset,
-          komi: komi,
-          sgf: _renderCurrentSgf(),
-          status: 'analyzed',
-          winrateJson: jsonEncode(
-            data.map(
-              (int k, double v) => MapEntry<String, double>(k.toString(), v),
-            ),
-          ),
-        );
-      }
-      setState(() {
+        _winrates.addAll(data);
         _status = '分析完成';
       });
     } catch (e) {
@@ -778,8 +828,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       id: '${_analysisProfile.id}-ownership-fast',
       name: _analysisProfile.name,
       description: _analysisProfile.description,
-      maxVisits: 5,
-      thinkingTimeMs: 300,
+      maxVisits: 20,
+      thinkingTimeMs: 1000,
       includeOwnership: true,
     );
     return _katagoAdapter.analyze(
@@ -822,7 +872,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
               : StoneColor.white,
         ),
         rules: preset.toGameRules(komi: komi),
-        profile: _analysisProfile,
+        profile: _isThirdPartyRecord ? _thirdPartyAnalysisProfile : _analysisProfile,
       ),
     );
     final List<String> raw = analyzed.topMoves.isNotEmpty
@@ -914,6 +964,31 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     });
   }
 
+  void _goToTurn(int turn) {
+    if (_sgf == null) {
+      return;
+    }
+    final List<SgfNode> line = _currentLine();
+    if (turn <= 0) {
+      setState(() {
+        _path = <SgfNode>[];
+        _selectedVariation = 0;
+        _reviewTryMode = false;
+        _reviewTryState = null;
+        _reviewHintPoints = <GoPoint>[];
+      });
+      return;
+    }
+    final int end = turn.clamp(1, line.length);
+    setState(() {
+      _path = line.sublist(0, end);
+      _selectedVariation = 0;
+      _reviewTryMode = false;
+      _reviewTryState = null;
+      _reviewHintPoints = <GoPoint>[];
+    });
+  }
+
   String _toSgfCoord(GoPoint p) {
     const String letters = 'abcdefghijklmnopqrstuvwxyz';
     return '${letters[p.x]}${letters[p.y]}';
@@ -946,7 +1021,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           OutlinedButton.icon(
             onPressed: _importSgf,
             icon: const Icon(Icons.upload_file),
-            label: const Text('导入棋谱'),
+            label: const Text('选择 SGF'),
           ),
           const SizedBox(height: 8),
           TextFormField(
@@ -971,17 +1046,19 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         ],
         if (_sgf != null) ...<Widget>[
           const SizedBox(height: 12),
-          Text('棋谱: ${_sgf!.gameName ?? '未命名'}'),
           Text(
-            '对局: ${_sgf!.blackName ?? 'Black'} vs ${_sgf!.whiteName ?? 'White'}',
+            '${_sgf!.gameName ?? '未命名'}  (${_sgf!.blackName ?? 'Black'} vs ${_sgf!.whiteName ?? 'White'})  ${_sgf!.mainLineNodes().length}手',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.bold),
           ),
-          Text('主线步数: ${_sgf!.mainLineNodes().length}'),
         ],
         if (!compactReviewLayout) ...<Widget>[
           const SizedBox(height: 20),
-          const Text('规则补录（导入时使用）'),
+          const Text('规则补录（导入时使用；SGF 内可含 RU/贴目 KM，导入后会带出）'),
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
+            key: ValueKey<String>(_ruleset),
             initialValue: _ruleset,
             items: kRulePresets
                 .map(
@@ -1019,7 +1096,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         ],
         if (_sgf != null && boardState != null) ...<Widget>[
           ReviewBoardPanel(
-            title: '打谱',
+            title: null, // 隐藏标题，头部已显示棋谱信息
             state: _reviewTryState ?? boardState,
             lastMovePoint: (_reviewTryState ?? boardState).moves.isNotEmpty
                 ? (_reviewTryState ?? boardState).moves.last.point
@@ -1031,6 +1108,11 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                 : '已标注 ${_reviewHintPoints.length} 个提示点',
             hintLoading: _reviewHintLoading,
             ownershipLoading: _reviewOwnershipLoading,
+            // 传入胜率数据，让 Panel 负责渲染图表并联动
+            currentTurn: _currentTurn,
+            maxTurn: _currentLine().length,
+            winrates: _winrates,
+            onTurnSelected: _goToTurn,
             onEnterTry: () {
               setState(() {
                 _reviewTryMode = true;
@@ -1053,6 +1135,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                       cur.play(GoMove(player: cur.toPlay, point: p));
                   _reviewHintPoints = <GoPoint>[];
                 });
+                playStoneSound();
               } catch (_) {}
             },
             onRequestHint: () async {
@@ -1084,7 +1167,21 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                   onPressed: _path.isNotEmpty ? _prev : null,
                   icon: const Icon(Icons.chevron_left),
                 ),
-                Expanded(child: Text('当前手数: $_currentTurn')),
+                Expanded(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text('手数: $_currentTurn'),
+                      const SizedBox(width: 12),
+                      Text(
+                        _winrates.containsKey(_currentTurn)
+                            ? '当前胜率: ${(_winrates[_currentTurn]! * 100).toStringAsFixed(1)}%'
+                            : '当前胜率: --',
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
                 if (_currentNode != null && _currentNode!.children.length > 1)
                   SizedBox(
                     width: 120,
@@ -1104,6 +1201,11 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                         if (v == null) return;
                         setState(() => _selectedVariation = v);
                       },
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                        border: OutlineInputBorder(),
+                      ),
                     ),
                   ),
                 IconButton(
@@ -1115,34 +1217,16 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                 ),
               ],
             ),
-            bottomChild: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                FilledButton.icon(
-                  onPressed: _analyzing ? null : _analyzeWinrates,
-                  icon: _analyzing
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.analytics_outlined),
-                  label: const Text('分析每步胜率'),
-                ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  height: 180,
-                  child: WinrateChart(
-                    winrates: _winrates,
-                    maxTurn: _currentLine().length,
-                  ),
-                ),
-                if (_winrates.containsKey(_currentTurn))
-                  Text(
-                    '第$_currentTurn手胜率: ${(_winrates[_currentTurn]! * 100).toStringAsFixed(1)}%',
-                  ),
-              ],
+            bottomChild: FilledButton.icon(
+              onPressed: _analyzing ? null : _analyzeCurrentWinrate,
+              icon: _analyzing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.analytics_outlined),
+              label: const Text('分析当前胜率'),
             ),
           ),
         ],
@@ -1190,8 +1274,7 @@ class _ImportSgfPage extends StatefulWidget {
 
 class _ImportSgfPageState extends State<_ImportSgfPage> {
   final TextEditingController _urlController = TextEditingController();
-  String _ruleset = 'chinese';
-  double _komi = 7.5;
+  static const SgfParser _sgfParser = SgfParser();
   bool _loading = false;
   String? _status;
 
@@ -1201,40 +1284,79 @@ class _ImportSgfPageState extends State<_ImportSgfPage> {
     super.dispose();
   }
 
-  void _onRulesChanged(String value) {
-    final RulePreset preset = rulePresetFromString(value);
-    setState(() {
-      _ruleset = preset.id;
-      _komi = preset.defaultKomi;
-    });
-  }
-
   Future<void> _pickFile() async {
     setState(() {
       _loading = true;
       _status = null;
     });
     try {
-      final FilePickerResult? picked = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: <String>['sgf'],
-        withData: true,
+      final Directory? downloadsDir = await getDownloadsDirectory();
+      final String? initialDir = downloadsDir?.path;
+      final String? dirPath = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: '选择包含棋谱的文件夹',
+        initialDirectory: initialDir,
       );
-      if (picked == null || picked.files.isEmpty) {
+      if (dirPath == null || dirPath.isEmpty) {
         return;
       }
-      final PlatformFile file = picked.files.first;
-      final String content = String.fromCharCodes(file.bytes ?? <int>[]);
+      final Directory dir = Directory(dirPath);
+      if (!dir.existsSync()) {
+        setState(() => _status = '文件夹不存在');
+        return;
+      }
+      List<FileSystemEntity> entities;
+      try {
+        entities = dir.listSync();
+      } catch (e) {
+        setState(() => _status = '无法读取文件夹: $e');
+        return;
+      }
+      final List<File> sgfFiles = entities
+          .whereType<File>()
+          .where((File f) => f.path.toLowerCase().endsWith('.sgf'))
+          .toList();
+      if (sgfFiles.isEmpty) {
+        setState(() => _status = '该文件夹内没有 SGF 文件');
+        return;
+      }
+      sgfFiles.sort((File a, File b) => a.path.compareTo(b.path));
       if (!mounted) {
         return;
       }
+      final File? chosen = await showDialog<File>(
+        context: context,
+        builder: (BuildContext ctx) {
+          return SimpleDialog(
+            title: const Text('选择棋谱文件'),
+            children: sgfFiles.map((File f) {
+              final String name = f.path.split(RegExp(r'[/\\]')).last;
+              return SimpleDialogOption(
+                onPressed: () => Navigator.of(ctx).pop(f),
+                child: Text(name, overflow: TextOverflow.ellipsis),
+              );
+            }).toList(),
+          );
+        },
+      );
+      if (chosen == null) {
+        return;
+      }
+      final String content = await chosen.readAsString();
+      final String title = chosen.path.split(RegExp(r'[/\\]')).last;
+      if (!mounted) {
+        return;
+      }
+      final SgfGame parsed = _sgfParser.parse(content);
+      final String ruleset = parsed.rules.isEmpty
+          ? 'chinese'
+          : rulePresetFromString(parsed.rules).id;
       Navigator.of(context).pop(
         _ImportResult(
           sgf: content,
-          title: file.name,
+          title: title,
           source: 'import',
-          ruleset: _ruleset,
-          komi: _komi,
+          ruleset: ruleset,
+          komi: parsed.komi,
         ),
       );
     } catch (e) {
@@ -1274,13 +1396,17 @@ class _ImportSgfPageState extends State<_ImportSgfPage> {
       final String fileName = uri.pathSegments.isNotEmpty
           ? uri.pathSegments.last
           : 'downloaded.sgf';
+      final SgfGame parsed = _sgfParser.parse(response.body);
+      final String ruleset = parsed.rules.isEmpty
+          ? 'chinese'
+          : rulePresetFromString(parsed.rules).id;
       Navigator.of(context).pop(
         _ImportResult(
           sgf: response.body,
           title: fileName,
           source: 'download',
-          ruleset: _ruleset,
-          komi: _komi,
+          ruleset: ruleset,
+          komi: parsed.komi,
         ),
       );
     } catch (e) {
@@ -1303,46 +1429,10 @@ class _ImportSgfPageState extends State<_ImportSgfPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: <Widget>[
-          DropdownButtonFormField<String>(
-            initialValue: _ruleset,
-            items: kRulePresets
-                .where(
-                  (RulePreset p) =>
-                      p.id == 'chinese' ||
-                      p.id == 'japanese' ||
-                      p.id == 'classical',
-                )
-                .map(
-                  (RulePreset p) => DropdownMenuItem<String>(
-                    value: p.id,
-                    child: Text(p.label),
-                  ),
-                )
-                .toList(),
-            onChanged: (String? value) {
-              if (value != null) {
-                _onRulesChanged(value);
-              }
-            },
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              labelText: '规则',
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextFormField(
-            initialValue: _komi.toStringAsFixed(1),
-            enabled: false,
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              labelText: '贴目（规则默认）',
-            ),
-          ),
-          const SizedBox(height: 16),
           FilledButton.icon(
             onPressed: _loading ? null : _pickFile,
             icon: const Icon(Icons.upload_file),
-            label: const Text('选择 SGF 文件'),
+            label: const Text('选择 SGF'),
           ),
           const SizedBox(height: 12),
           TextFormField(

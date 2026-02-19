@@ -236,7 +236,8 @@ import Darwin
         "scoreLead": scoreLead,
         "rawResponse": response
       ]
-      if let ownershipAny = rootInfo?["ownership"] as? [Any] {
+      // Fix: ownership is a top-level field, not inside rootInfo
+      if let ownershipAny = response["ownership"] as? [Any] {
         resultMap["ownership"] = ownershipAny.compactMap { ($0 as? NSNumber)?.doubleValue }
       }
       result(resultMap)

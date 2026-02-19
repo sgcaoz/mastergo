@@ -5,6 +5,7 @@ import 'package:mastergo/domain/entities/game_rules.dart';
 import 'package:mastergo/domain/entities/game_setup.dart';
 import 'package:mastergo/domain/entities/katago_model.dart';
 import 'package:mastergo/infra/config/katago_model_repository.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 class KatagoAnalyzeRequest {
@@ -155,6 +156,9 @@ class PlatformKatagoAdapter implements KatagoAdapter {
       ownership = rawOwnership
           .map((dynamic e) => (e is num) ? e.toDouble() : 0.0)
           .toList();
+      debugPrint('KataGo adapter received ownership: length=${ownership.length}');
+    } else {
+      debugPrint('KataGo adapter received ownership: null or invalid type');
     }
 
     return KatagoAnalyzeResult(
