@@ -124,6 +124,16 @@ class PlatformKatagoAdapter implements KatagoAdapter {
 
   @override
   Future<KatagoAnalyzeResult> analyze(KatagoAnalyzeRequest request) async {
+    try {
+      return await _analyzeOnce(request);
+    } catch (_) {
+      _started = false;
+      await ensureStarted();
+      return _analyzeOnce(request);
+    }
+  }
+
+  Future<KatagoAnalyzeResult> _analyzeOnce(KatagoAnalyzeRequest request) async {
     await ensureStarted();
     final Map<dynamic, dynamic>? response = await _channel
         .invokeMapMethod<dynamic, dynamic>('analyzeOnce', <String, Object?>{

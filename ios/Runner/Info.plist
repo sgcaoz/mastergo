@@ -47,5 +47,25 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Camera is used to capture the Go board for position recognition.</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>SGF Game Record</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.plain-text</string>
+				<string>public.data</string>
+			</array>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>sgf</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

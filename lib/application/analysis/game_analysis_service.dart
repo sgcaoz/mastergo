@@ -29,6 +29,7 @@ class GameAnalysisService {
     required double komi,
     required AnalysisProfile profile,
     List<String> initialStones = const <String>[],
+    StoneColor startingPlayer = StoneColor.black,
     int? timeoutMs,
     void Function(int turn, int total)? onProgress,
     int startTurn = 0,
@@ -49,7 +50,7 @@ class GameAnalysisService {
           initialStones: initialStones,
           gameSetup: GameSetup(
             boardSize: boardSize,
-            startingPlayer: StoneColor.black,
+            startingPlayer: startingPlayer,
           ),
           rules: rules,
           profile: profile,
@@ -62,12 +63,23 @@ class GameAnalysisService {
     return winrates;
   }
 
+  /// 前期（手数<=50）恶手：胜率跌 10%；后期：胜率跌 20%。
+  static const int blunderEarlyCutoff = 50;
+  static const double blunderEarlyThreshold = 0.10;
+  static const double blunderLateThreshold = 0.20;
+
   List<MoveHint> buildHints(
     Map<int, double> blackWinrateByTurn, {
     required GoStone playerStone,
     double blunderThreshold = 0.20,
     double brilliantEpsilon = 0.05,
+    int? blunderEarlyTurnCutoff,
+    double? blunderEarlyThresholdParam,
+    double? blunderLateThresholdParam,
   }) {
+    final int earlyCutoff = blunderEarlyTurnCutoff ?? blunderEarlyCutoff;
+    final double earlyTh = blunderEarlyThresholdParam ?? blunderEarlyThreshold;
+    final double lateTh = blunderLateThresholdParam ?? blunderLateThreshold;
     final List<int> turns = blackWinrateByTurn.keys.toList()..sort();
     final List<MoveHint> hints = <MoveHint>[];
     for (int i = 1; i < turns.length; i++) {
@@ -92,14 +104,17 @@ class GameAnalysisService {
             kind: HintKind.brilliant,
           ),
         );
-      } else if (deltaPlayer <= -blunderThreshold) {
-        hints.add(
-          MoveHint(
-            turn: turn,
-            deltaPlayerWinrate: deltaPlayer,
-            kind: HintKind.blunder,
-          ),
-        );
+      } else {
+        final double th = turn <= earlyCutoff ? earlyTh : lateTh;
+        if (deltaPlayer <= -th) {
+          hints.add(
+            MoveHint(
+              turn: turn,
+              deltaPlayerWinrate: deltaPlayer,
+              kind: HintKind.blunder,
+            ),
+          );
+        }
       }
     }
     return hints;

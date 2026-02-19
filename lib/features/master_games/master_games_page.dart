@@ -1,21 +1,43 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
-import 'package:mastergo/domain/entities/master_game_meta.dart';
+import 'package:mastergo/domain/entities/game_record.dart';
 import 'package:mastergo/features/record_review/record_review_page.dart';
-import 'package:mastergo/infra/config/master_game_repository.dart';
 import 'package:mastergo/infra/storage/game_record_repository.dart';
 
 class MasterGamesPage extends StatelessWidget {
   const MasterGamesPage({super.key});
 
+  static String _masterRecordSubtitle(GameRecord record) {
+    try {
+      final Map<String, dynamic>? m =
+          jsonDecode(record.sessionJson) as Map<String, dynamic>?;
+      if (m == null) return record.title;
+      final String? players = m['players'] as String?;
+      final String? event = m['event'] as String?;
+      final Object? year = m['year'];
+      if (players != null && event != null && year != null) {
+        return '$players · $event · $year';
+      }
+    } catch (_) {}
+    return record.title;
+  }
+
+  Future<List<GameRecord>> _loadMasterGames(
+    GameRecordRepository recordRepository,
+  ) async {
+    return recordRepository.listBySource('master');
+  }
+
   @override
   Widget build(BuildContext context) {
-    final MasterGameRepository repository = MasterGameRepository();
     final GameRecordRepository recordRepository = GameRecordRepository();
+    final Future<List<GameRecord>> future = _loadMasterGames(recordRepository);
 
-    return FutureBuilder<List<MasterGameMeta>>(
-      future: repository.loadIndex(),
+    return FutureBuilder<List<GameRecord>>(
+      future: future,
       builder:
-          (BuildContext context, AsyncSnapshot<List<MasterGameMeta>> snapshot) {
+          (BuildContext context, AsyncSnapshot<List<GameRecord>> snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
               return const Center(child: CircularProgressIndicator());
             }
@@ -23,8 +45,7 @@ class MasterGamesPage extends StatelessWidget {
               return Center(child: Text('加载名局列表失败: ${snapshot.error}'));
             }
 
-            final List<MasterGameMeta> games =
-                snapshot.data ?? <MasterGameMeta>[];
+            final List<GameRecord> games = snapshot.data ?? <GameRecord>[];
             if (games.isEmpty) {
               return const Center(child: Text('暂无内置名局'));
             }
@@ -34,38 +55,25 @@ class MasterGamesPage extends StatelessWidget {
               itemCount: games.length,
               separatorBuilder: (_, _) => const SizedBox(height: 8),
               itemBuilder: (BuildContext context, int index) {
-                final MasterGameMeta item = games[index];
+                final GameRecord record = games[index];
                 return Card(
                   child: ListTile(
-                    title: Text(item.title),
+                    title: Text(record.title),
                     subtitle: Text(
-                      '${item.players} · ${item.event} · ${item.year}\n'
-                      '${item.boardSize}路 · ${item.ruleset} · komi ${item.komi}',
+                      '${_masterRecordSubtitle(record)}\n'
+                      '${record.boardSize}路 · ${record.ruleset} · komi ${record.komi}',
                     ),
                     isThreeLine: true,
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () async {
-                      final String sgf = await repository.loadSgfContent(
-                        item.sgfAssetPath,
-                      );
-                      await recordRepository.saveMasterGame(
-                        id: 'master-${item.id}',
-                        title: item.title,
-                        boardSize: item.boardSize,
-                        ruleset: item.ruleset,
-                        komi: item.komi,
-                        sgf: sgf,
-                      );
-                      if (!context.mounted) {
-                        return;
-                      }
+                      if (!context.mounted) return;
                       await Navigator.of(context).push(
                         MaterialPageRoute<void>(
                           builder: (_) => RecordReviewPage(
-                            initialSgfContent: sgf,
-                            initialTitle: item.title,
-                            initialRecordId: 'master-${item.id}',
-                            initialSource: 'master',
+                            initialSgfContent: record.sgf,
+                            initialTitle: record.title,
+                            initialRecordId: record.id,
+                            initialSource: record.source,
                           ),
                         ),
                       );

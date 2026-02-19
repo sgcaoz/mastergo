@@ -61,6 +61,7 @@ class _AIPlayPageState extends State<AIPlayPage> {
   RulePreset get _activeRulePreset => rulePresetFromString(_selectedRulesetId);
 
   Future<void> _startBattle(AnalysisProfile profile) async {
+    if (!context.mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (BuildContext context) => _AIBattlePage(
@@ -260,6 +261,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   String? _hintSummary;
   bool _aiThinking = false;
   bool _restoring = true;
+  bool _engineReady = false;
   String _status = '准备中...';
   double? _blackWinrate;
   final Map<int, double> _winrateByTurn = <int, double>{};
@@ -325,6 +327,8 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     _rules = widget.handicap > 0
         ? widget.rules.copyWith(komi: 0)
         : widget.rules;
+    _initializeGame();
+    _restoring = false;
     unawaited(_bootstrapSession());
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
@@ -342,14 +346,20 @@ class _AIBattlePageState extends State<_AIBattlePage> {
 
   Future<void> _bootstrapSession() async {
     final bool restored = await _restoreSession();
-    if (!restored) {
-      _initializeGame();
+    if (!mounted) return;
+    if (restored) {
+      setState(() {});
     }
-    if (!mounted) {
-      return;
-    }
+    unawaited(_ensureEngineThenMaybeAi());
+  }
+
+  Future<void> _ensureEngineThenMaybeAi() async {
+    try {
+      await widget.adapter.ensureStarted();
+    } catch (_) {}
+    if (!mounted) return;
     setState(() {
-      _restoring = false;
+      _engineReady = true;
     });
     if (_game != null && !_isGameOver && _game!.toPlay == _aiStone) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -542,6 +552,15 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   Future<void> _aiMove() async {
     if (_game == null || _game!.toPlay != _aiStone || _isGameOver || _tryMode) {
       return;
+    }
+    if (!_engineReady) {
+      try {
+        await widget.adapter.ensureStarted();
+      } catch (_) {}
+      if (!mounted) return;
+      setState(() {
+        _engineReady = true;
+      });
     }
     final AnalysisProfile effectiveProfile = _effectiveProfileForTurn(
       _game!.moves.length,
@@ -1437,7 +1456,6 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     final List<MoveHint> hints = _analysisService.buildHints(
       _winrateByTurn,
       playerStone: _playerStone,
-      blunderThreshold: 0.20,
       brilliantEpsilon: 0.05,
     );
     return hints
@@ -1560,6 +1578,12 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                       currentTurn: turn,
                       maxTurn: max((_game?.moves.length ?? 1), 1),
                       winrates: _winrateByTurn,
+                      onTurnSelected: (int t) {
+                        setSheetState(() {
+                          turn = t.clamp(0, moves.length);
+                          exitTryAndClearHints();
+                        });
+                      },
                       turnNavigation: Row(
                         children: <Widget>[
                           IconButton(
@@ -1620,12 +1644,6 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                             const Text('暂无明显恶手')
                           else
                             ...bad.map(Text.new),
-                          const SizedBox(height: 8),
-                          Text('自动记录 SGF（可复制）',
-                              style: Theme.of(context).textTheme.titleMedium),
-                          const SizedBox(height: 4),
-                          SelectableText(
-                              _toSgf(), style: const TextStyle(fontSize: 12)),
                         ],
                       ),
                     ),
@@ -1746,7 +1764,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          _status,
+                          _engineReady ? _status : '启动引擎中…',
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -1781,13 +1799,13 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                               _tryMode ? '结束试下' : '试下',
                             ),
                             compactBtn(
-                              (!_isGameOver && !_aiThinking)
+                              (_engineReady && !_isGameOver && !_aiThinking)
                                   ? _showHintPoints
                                   : null,
                               '提示',
                             ),
                             compactBtn(
-                              (!_isGameOver && !_aiThinking)
+                              (_engineReady && !_isGameOver && !_aiThinking)
                                   ? _showPositionAnalysis
                                   : null,
                               '局势分析',

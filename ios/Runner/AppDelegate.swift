@@ -6,7 +6,9 @@ import Darwin
 @main
 @objc class AppDelegate: FlutterAppDelegate {
   private let katagoChannelName = "mastergo/katago"
+  private let fileOpenerChannelName = "mastergo/file_opener"
   private var iosEngineStarted = false
+  private var pendingOpenSgfUrl: URL?
   private var katagoPid: pid_t = 0
   private var katagoStdinFd: Int32 = -1
   private var katagoStdoutFd: Int32 = -1
@@ -41,8 +43,61 @@ import Darwin
       }
     }
 
+    if let controller = window?.rootViewController as? FlutterViewController {
+      let fileOpenerChannel = FlutterMethodChannel(
+        name: fileOpenerChannelName,
+        binaryMessenger: controller.binaryMessenger
+      )
+      fileOpenerChannel.setMethodCallHandler { [weak self] call, result in
+        if call.method == "getInitialOpenedSgf" {
+          self?.getInitialOpenedSgf(result: result)
+        } else {
+          result(FlutterMethodNotImplemented)
+        }
+      }
+    }
+
     GeneratedPluginRegistrant.register(with: self)
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  override func application(
+    _ app: UIApplication,
+    open url: URL,
+    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+  ) -> Bool {
+    if url.pathExtension.lowercased() == "sgf" {
+      pendingOpenSgfUrl = url
+    }
+    return true
+  }
+
+  private func getInitialOpenedSgf(result: @escaping FlutterResult) {
+    guard let url = pendingOpenSgfUrl else {
+      result(nil)
+      return
+    }
+    pendingOpenSgfUrl = nil
+    let fileName = url.lastPathComponent
+    var didStartAccessing = false
+    if url.startAccessingSecurityScopedResource() {
+      didStartAccessing = true
+    }
+    defer {
+      if didStartAccessing {
+        url.stopAccessingSecurityScopedResource()
+      }
+    }
+    do {
+      let content = try String(contentsOf: url, encoding: .utf8)
+      result(["content": content, "fileName": fileName])
+    } catch {
+      result(FlutterError(
+        code: "READ_FAILED",
+        message: error.localizedDescription,
+        details: nil
+      ))
+    }
   }
 
   private func prepareModel(call: FlutterMethodCall, result: @escaping FlutterResult) {

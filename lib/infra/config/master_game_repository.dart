@@ -1,24 +1,13 @@
 import 'package:flutter/services.dart';
 import 'package:mastergo/domain/entities/master_game_meta.dart';
-import 'package:mastergo/infra/config/json_asset_loader.dart';
+import 'package:mastergo/infra/config/master_games_data.dart';
 
 class MasterGameRepository {
-  MasterGameRepository({JsonAssetLoader? loader})
-    : _loader = loader ?? const JsonAssetLoader();
+  MasterGameRepository();
 
-  static const String _indexAssetPath = 'assets/master_games/index.json';
-
-  final JsonAssetLoader _loader;
-
+  /// 名局元数据列表（Dart 定义），仅用于一次性灌库时读取 SGF 并写入数据库。
   Future<List<MasterGameMeta>> loadIndex() async {
-    final Map<String, dynamic> data = await _loader.loadMap(_indexAssetPath);
-    final List<dynamic> items = data['games'] as List<dynamic>? ?? <dynamic>[];
-    return items
-        .map(
-          (dynamic item) =>
-              MasterGameMeta.fromJson(item as Map<String, dynamic>),
-        )
-        .toList();
+    return Future.value(masterGamesList);
   }
 
   Future<String> loadSgfContent(String assetPath) {

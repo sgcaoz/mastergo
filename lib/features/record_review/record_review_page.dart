@@ -1,15 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Directory, File, FileSystemEntity;
+import 'dart:io' show Directory, File, FileSystemEntity, Platform;
 
+import 'package:external_path/external_path.dart';
+import 'package:path/path.dart' as p;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
-import 'package:mastergo/application/analysis/game_analysis_service.dart';
+import 'package:mastergo/application/analysis/game_analysis_service.dart'
+    show GameAnalysisService, HintKind, MoveHint;
 import 'package:mastergo/domain/entities/analysis_profile.dart';
 import 'package:mastergo/domain/entities/game_record.dart';
-import 'package:mastergo/domain/entities/master_game_meta.dart';
 import 'package:mastergo/domain/entities/rule_presets.dart';
 import 'package:mastergo/domain/entities/game_setup.dart';
 import 'package:mastergo/domain/go/go_game.dart';
@@ -23,6 +25,36 @@ import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
 import 'package:mastergo/infra/sound/stone_sound.dart';
 import 'package:mastergo/infra/storage/game_record_repository.dart';
 
+/// 默认打开的目录：下载目录。iOS 用 path_provider；Android 上 getDownloadsDirectory 不可用时用 external_path 取公共 Download 路径。
+Future<String?> getInitialDirectoryForImport() async {
+  try {
+    final Directory? downloads = await getDownloadsDirectory();
+    if (downloads != null) return downloads.path;
+  } catch (_) {}
+  if (Platform.isAndroid) {
+    try {
+      final String path = await ExternalPath.getExternalStoragePublicDirectory(
+        ExternalPath.DIRECTORY_DOWNLOAD,
+      );
+      if (path.isNotEmpty) return path;
+    } catch (_) {}
+  }
+  return null;
+}
+
+/// 将 SGF 内容写入设备下载目录（与 URL 导入一致，便于在文件管理器中看到）。失败不抛错。
+Future<void> saveSgfToDownloadDirectory(String content, String fileName) async {
+  try {
+    final String? dir = await getInitialDirectoryForImport();
+    if (dir == null || dir.isEmpty) return;
+    final String safeName = fileName.toLowerCase().endsWith('.sgf')
+        ? fileName
+        : '$fileName.sgf';
+    final File file = File(p.join(dir, safeName));
+    await file.writeAsString(content);
+  } catch (_) {}
+}
+
 class RecordReviewPage extends StatefulWidget {
   const RecordReviewPage({
     super.key,
@@ -30,12 +62,19 @@ class RecordReviewPage extends StatefulWidget {
     this.initialTitle,
     this.initialRecordId,
     this.initialSource,
+    this.openWithSgfContent,
+    this.openWithSgfFileName,
+    this.onOpenWithSgfConsumed,
   });
 
   final String? initialSgfContent;
   final String? initialTitle;
   final String? initialRecordId;
   final String? initialSource;
+  /// 由「用本应用打开」传入的 SGF 内容，以导入棋谱方式处理
+  final String? openWithSgfContent;
+  final String? openWithSgfFileName;
+  final VoidCallback? onOpenWithSgfConsumed;
 
   @override
   State<RecordReviewPage> createState() => _RecordReviewPageState();
@@ -142,6 +181,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       status: 'ready',
       winrateJson: jsonEncode(<String, double>{}),
     );
+    unawaited(saveSgfToDownloadDirectory(result.sgf, result.title));
     _sourceFutures.remove(result.source);
     if (!mounted) {
       return;
@@ -273,7 +313,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     setState(() {
       _sourceFutures
         ..remove('battle_local')
-        ..remove('download');
+        ..remove('download')
+        ..remove('import');
       _status = '已删除 1 条棋谱';
     });
   }
@@ -311,17 +352,38 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     setState(() {
       _sourceFutures
         ..remove('battle_local')
-        ..remove('download');
+        ..remove('download')
+        ..remove('import');
       _status = '已删除 ${_selectedIds.length} 条棋谱';
       _selectedIds.clear();
       _selectMode = false;
     });
   }
 
+  /// 名局列表：从数据库按 source=master 列出（seed 库在首次打开时已从 assets 复制）。
+  Future<List<GameRecord>> _loadMasterGamesFromDb() async {
+    return _recordRepository.listBySource('master');
+  }
+
+  /// 从名局记录的 sessionJson 解析副标题（players · event · year）。
+  static String _masterRecordSubtitle(GameRecord record) {
+    try {
+      final Map<String, dynamic>? m =
+          jsonDecode(record.sessionJson) as Map<String, dynamic>?;
+      if (m == null) return record.title;
+      final String? players = m['players'] as String?;
+      final String? event = m['event'] as String?;
+      final Object? year = m['year'];
+      if (players != null && event != null && year != null) {
+        return '$players · $event · $year';
+      }
+    } catch (_) {}
+    return record.title;
+  }
+
   Widget _buildLibraryHome(BuildContext context) {
-    final MasterGameRepository masterRepo = MasterGameRepository();
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -357,6 +419,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
             tabs: <Tab>[
               Tab(text: '本机对局'),
               Tab(text: '下载棋谱'),
+              Tab(text: '导入棋谱'),
               Tab(text: '名局'),
             ],
           ),
@@ -365,12 +428,13 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
               children: <Widget>[
                 _buildRecordList('battle_local'),
                 _buildRecordList('download'),
-                FutureBuilder<List<MasterGameMeta>>(
-                  future: masterRepo.loadIndex(),
+                _buildRecordList('import'),
+                FutureBuilder<List<GameRecord>>(
+                  future: _loadMasterGamesFromDb(),
                   builder:
                       (
                         BuildContext context,
-                        AsyncSnapshot<List<MasterGameMeta>> snapshot,
+                        AsyncSnapshot<List<GameRecord>> snapshot,
                       ) {
                         if (snapshot.connectionState != ConnectionState.done) {
                           return const Center(
@@ -382,8 +446,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                             child: Text('加载名局失败: ${snapshot.error}'),
                           );
                         }
-                        final List<MasterGameMeta> games =
-                            snapshot.data ?? <MasterGameMeta>[];
+                        final List<GameRecord> games =
+                            snapshot.data ?? <GameRecord>[];
                         if (games.isEmpty) {
                           return const Center(child: Text('暂无名局'));
                         }
@@ -391,34 +455,22 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                           itemCount: games.length,
                           separatorBuilder: (_, _) => const Divider(height: 1),
                           itemBuilder: (_, int i) {
-                            final MasterGameMeta g = games[i];
+                            final GameRecord record = games[i];
                             return ListTile(
-                              title: Text(g.title),
+                              title: Text(record.title),
                               subtitle: Text(
-                                '${g.players} · ${g.event} · ${g.year}',
+                                _masterRecordSubtitle(record),
                               ),
                               trailing: const Icon(Icons.chevron_right),
                               onTap: () async {
-                                final String sgf = await masterRepo
-                                    .loadSgfContent(g.sgfAssetPath);
-                                await _recordRepository.saveMasterGame(
-                                  id: 'master-${g.id}',
-                                  title: g.title,
-                                  boardSize: g.boardSize,
-                                  ruleset: g.ruleset,
-                                  komi: g.komi,
-                                  sgf: sgf,
-                                );
-                                if (!context.mounted) {
-                                  return;
-                                }
+                                if (!context.mounted) return;
                                 await Navigator.of(context).push(
                                   MaterialPageRoute<void>(
                                     builder: (_) => RecordReviewPage(
-                                      initialSgfContent: sgf,
-                                      initialTitle: g.title,
-                                      initialRecordId: 'master-${g.id}',
-                                      initialSource: 'master',
+                                      initialSgfContent: record.sgf,
+                                      initialTitle: record.title,
+                                      initialRecordId: record.id,
+                                      initialSource: record.source,
                                     ),
                                   ),
                                 );
@@ -461,7 +513,44 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           ? '已加载棋谱'
           : '已加载 ${widget.initialTitle}';
     }
+    if (widget.openWithSgfContent != null &&
+        widget.openWithSgfContent!.trim().isNotEmpty) {
+      _applyOpenWithSgfOnce(
+        widget.openWithSgfContent!,
+        widget.openWithSgfFileName ?? 'opened.sgf',
+        widget.onOpenWithSgfConsumed,
+      );
+    }
     unawaited(_loadInitialRecordWinrates());
+  }
+
+  bool _openWithSgfConsumed = false;
+
+  void _applyOpenWithSgfOnce(
+    String content,
+    String fileName,
+    VoidCallback? onConsumed,
+  ) {
+    if (_openWithSgfConsumed) return;
+    _openWithSgfConsumed = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _applyImportedSgf(content, fileName).then((_) {
+        onConsumed?.call();
+      });
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant RecordReviewPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.openWithSgfContent != null &&
+        widget.openWithSgfContent!.trim().isNotEmpty) {
+      _applyOpenWithSgfOnce(
+        widget.openWithSgfContent!,
+        widget.openWithSgfFileName ?? 'opened.sgf',
+        widget.onOpenWithSgfConsumed,
+      );
+    }
   }
 
   Future<void> _loadInitialRecordWinrates() async {
@@ -505,8 +594,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
 
   /// 唯一入口：先选文件夹，再在列表中选一个 SGF。优先从下载目录打开以兼容刚下载的文件。
   Future<void> _importSgf() async {
-    final Directory? downloadsDir = await getDownloadsDirectory();
-    final String? initialDir = downloadsDir?.path;
+    final String? initialDir = await getInitialDirectoryForImport();
     final String? dirPath = await FilePicker.platform.getDirectoryPath(
       dialogTitle: '选择包含棋谱的文件夹',
       initialDirectory: initialDir,
@@ -573,32 +661,54 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       return;
     }
     final SgfGame parsed = _sgfParser.parse(content);
+    final String ruleset =
+        parsed.rules.isEmpty ? _ruleset : rulePresetFromString(parsed.rules).id;
+    final GameRecord? existing =
+        await _recordRepository.findImportBySgfContent(content);
+    final String recordId = existing?.id ?? _recordRepository.newId(prefix: 'import');
+    final String winrateJson =
+        existing?.winrateJson ?? jsonEncode(<String, double>{});
     setState(() {
       _sgf = parsed;
-      _ruleset = parsed.rules.isEmpty
-          ? _ruleset
-          : rulePresetFromString(parsed.rules).id;
+      _ruleset = ruleset;
       _komiController.text = parsed.komi.toString();
       _path = <SgfNode>[];
       _selectedVariation = 0;
       _winrates.clear();
-      _status = '已导入 $fileName';
+      _status = existing != null ? '已更新 $fileName（同棋谱去重）' : '已导入 $fileName';
     });
-    _recordId = _recordRepository.newId(prefix: 'import');
+    _recordId = recordId;
     _recordSource = 'import';
     await _recordRepository.saveOrUpdateSourceRecord(
-      id: _recordId,
+      id: recordId,
       source: _recordSource,
       title: fileName,
       boardSize: parsed.boardSize,
-      ruleset: parsed.rules.isEmpty
-          ? _ruleset
-          : rulePresetFromString(parsed.rules).id,
+      ruleset: ruleset,
       komi: parsed.komi,
       sgf: content,
       status: 'ready',
-      winrateJson: jsonEncode(<String, double>{}),
+      winrateJson: winrateJson,
     );
+    unawaited(saveSgfToDownloadDirectory(content, fileName));
+    if (mounted) {
+      setState(() => _sourceFutures.remove('import'));
+    }
+    if (existing != null && existing.winrateJson.isNotEmpty) {
+      try {
+        final Map<String, dynamic> raw =
+            jsonDecode(existing.winrateJson) as Map<String, dynamic>;
+        final Map<int, double> parsedWinrates = raw.map(
+          (String k, dynamic v) => MapEntry<int, double>(
+            int.tryParse(k) ?? 0,
+            (v as num).toDouble(),
+          ),
+        )..remove(0);
+        if (mounted) {
+          setState(() => _winrates.addAll(parsedWinrates));
+        }
+      } catch (_) {}
+    }
   }
 
   Future<void> _downloadSgf() async {
@@ -626,12 +736,13 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       final SgfGame parsed = _sgfParser.parse(content);
       _recordId = _recordRepository.newId(prefix: 'download');
       _recordSource = 'download';
+      final String title = uri.pathSegments.isNotEmpty
+          ? uri.pathSegments.last
+          : 'downloaded.sgf';
       await _recordRepository.saveOrUpdateSourceRecord(
         id: _recordId,
         source: _recordSource,
-        title: uri.pathSegments.isNotEmpty
-            ? uri.pathSegments.last
-            : 'downloaded.sgf',
+        title: title,
         boardSize: parsed.boardSize,
         ruleset: parsed.rules.isEmpty
             ? _ruleset
@@ -641,10 +752,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         status: 'ready',
         winrateJson: jsonEncode(<String, double>{}),
       );
+      unawaited(saveSgfToDownloadDirectory(content, title));
       if (!mounted) {
         return;
       }
       setState(() {
+        _sourceFutures.remove('download');
         _sgf = parsed;
         _ruleset = parsed.rules.isEmpty
             ? _ruleset
@@ -733,15 +846,29 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _status = '正在分析当前局面...';
     });
     try {
-      final double komi = double.tryParse(_komiController.text) ?? _sgf!.komi;
+      final RulePreset preset = rulePresetFromString(_ruleset);
+      final double komi =
+          double.tryParse(_komiController.text) ?? preset.defaultKomi;
       final List<String> moveTokens = _currentLine()
           .where((SgfNode n) => n.move != null)
           .map((SgfNode n) => n.move!)
           .map((GoMove m) => m.toProtocolToken(_sgf!.boardSize))
           .toList();
+      final List<String> initialStones = <String>[
+        ..._sgf!.initialBlackStones.map(
+          (GoPoint p) =>
+              'B:${GoMove(player: GoStone.black, point: p).toGtp(_sgf!.boardSize)}',
+        ),
+        ..._sgf!.initialWhiteStones.map(
+          (GoPoint p) =>
+              'W:${GoMove(player: GoStone.white, point: p).toGtp(_sgf!.boardSize)}',
+        ),
+      ];
+      final StoneColor startingPlayer = _sgf!.initialBlackStones.isNotEmpty
+          ? StoneColor.white
+          : StoneColor.black;
       final AnalysisProfile profile = _profileForCurrentWinrate();
       final int timeoutMs = _timeoutMsForCurrentWinrate(profile);
-      // 只分析当前一步
       final Map<int, double> data = await _analysisService.analyzeTurns(
         adapter: _katagoAdapter,
         moveTokens: moveTokens,
@@ -749,8 +876,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         ruleset: _ruleset,
         komi: komi,
         profile: profile,
+        initialStones: initialStones,
+        startingPlayer: startingPlayer,
         timeoutMs: timeoutMs,
-        // 只分析当前手
         startTurn: _currentTurn,
         maxTurnsToAnalyze: 1,
       );
@@ -989,6 +1117,28 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     });
   }
 
+  /// 打谱用黑方视角生成妙手/恶手文案（与复盘 buildHints 一致）
+  List<String> _buildReviewHints({required bool good}) {
+    if (_winrates.isEmpty) {
+      return <String>[];
+    }
+    final List<MoveHint> hints = _analysisService.buildHints(
+      _winrates,
+      playerStone: GoStone.black,
+      brilliantEpsilon: 0.05,
+    );
+    return hints
+        .where(
+          (MoveHint h) =>
+              good ? h.kind == HintKind.brilliant : h.kind == HintKind.blunder,
+        )
+        .map(
+          (MoveHint h) =>
+              '第${h.turn}手后黑方胜率 ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
+        )
+        .toList();
+  }
+
   String _toSgfCoord(GoPoint p) {
     const String letters = 'abcdefghijklmnopqrstuvwxyz';
     return '${letters[p.x]}${letters[p.y]}';
@@ -1010,6 +1160,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     }
     final GoGameState? boardState = _stateAtPath();
     final bool compactReviewLayout = _recordId != null;
+    final List<String> reviewGoodHints = _buildReviewHints(good: true);
+    final List<String> reviewBadHints = _buildReviewHints(good: false);
     final Widget content = ListView(
       padding: const EdgeInsets.all(16),
       children: <Widget>[
@@ -1217,16 +1369,38 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                 ),
               ],
             ),
-            bottomChild: FilledButton.icon(
-              onPressed: _analyzing ? null : _analyzeCurrentWinrate,
-              icon: _analyzing
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.analytics_outlined),
-              label: const Text('分析当前胜率'),
+            bottomChild: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (_winrates.isNotEmpty) ...<Widget>[
+                  Text('妙手提示',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  if (reviewGoodHints.isEmpty)
+                    const Text('暂无明显妙手')
+                  else
+                    ...reviewGoodHints.map(Text.new),
+                  const SizedBox(height: 8),
+                  Text('恶手提示',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  if (reviewBadHints.isEmpty)
+                    const Text('暂无明显恶手')
+                  else
+                    ...reviewBadHints.map(Text.new),
+                  const SizedBox(height: 12),
+                ],
+                FilledButton.icon(
+                  onPressed: _analyzing ? null : _analyzeCurrentWinrate,
+                  icon: _analyzing
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.analytics_outlined),
+                  label: const Text('分析当前胜率'),
+                ),
+              ],
             ),
           ),
         ],
@@ -1290,8 +1464,7 @@ class _ImportSgfPageState extends State<_ImportSgfPage> {
       _status = null;
     });
     try {
-      final Directory? downloadsDir = await getDownloadsDirectory();
-      final String? initialDir = downloadsDir?.path;
+      final String? initialDir = await getInitialDirectoryForImport();
       final String? dirPath = await FilePicker.platform.getDirectoryPath(
         dialogTitle: '选择包含棋谱的文件夹',
         initialDirectory: initialDir,

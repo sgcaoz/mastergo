@@ -20,6 +20,15 @@ Flutter-based Go app scaffold with three core modules:
   - `ios/Runner/AppDelegate.swift`
   - currently returns explicit `IOS_ENGINE_NOT_LINKED` until KataGoKit is linked
 
+## 名局数据（Seed 库）
+
+名局在**构建阶段**一次性灌入 SQLite，产出 `assets/master_games/mastergo_seed.db`。App 首次使用时会将该文件复制到应用数据目录，不再在运行时从 Dart 列表或 SGF 灌库。
+
+- 元数据与 SGF 路径：`lib/infra/config/master_games_data.dart`
+- 生成 seed 库：在项目根目录执行  
+  `dart run tool/seed_master_db.dart`  
+  发版或增删名局后需重新运行并提交新的 `mastergo_seed.db`。
+
 ## Build (Way A)
 
 Rebuild Android KataGo binary locally and bundle into jniLibs:

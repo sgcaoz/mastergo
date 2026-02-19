@@ -1,8 +1,11 @@
 package com.boringtime.mastergo
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.OpenableColumns
 import io.flutter.FlutterInjector
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -20,15 +23,72 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class MainActivity : FlutterActivity() {
+
+    companion object {
+        @Volatile
+        var pendingOpenUri: Uri? = null
+    }
+
     private val channelName = "mastergo/katago"
+    private val fileOpenerChannelName = "mastergo/file_opener"
     private val engineExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var katagoProcess: Process? = null
     private var katagoStdin: BufferedWriter? = null
     private var katagoStdout: BufferedReader? = null
 
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        saveIntentUri(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        saveIntentUri(intent)
+    }
+
+    private fun saveIntentUri(intent: Intent?) {
+        val uri = intent?.data ?: return
+        when (uri.scheme) {
+            "file" -> if (uri.path?.lowercase(Locale.US)?.endsWith(".sgf") == true) {
+                pendingOpenUri = uri
+            }
+            "content" -> pendingOpenUri = uri
+            else -> { }
+        }
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, fileOpenerChannelName)
+            .setMethodCallHandler { call, result ->
+                if (call.method == "getInitialOpenedSgf") {
+                    engineExecutor.execute {
+                        try {
+                            val uri = pendingOpenUri
+                            pendingOpenUri = null
+                            if (uri == null) {
+                                mainHandler.post { result.success(null) }
+                                return@execute
+                            }
+                            val (content, fileName) = readUriToSgfContent(uri)
+                            if (content == null) {
+                                mainHandler.post { result.success(null) }
+                                return@execute
+                            }
+                            mainHandler.post {
+                                result.success(mapOf("content" to content, "fileName" to fileName))
+                            }
+                        } catch (e: Exception) {
+                            mainHandler.post {
+                                result.error("READ_FAILED", e.message, null)
+                            }
+                        }
+                    }
+                } else {
+                    mainHandler.post { result.notImplemented() }
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call: MethodCall, result: MethodChannel.Result ->
                 if (call.method == "prepareModel" ||
@@ -406,5 +466,41 @@ class MainActivity : FlutterActivity() {
             })
         }
         return arr
+    }
+
+    private fun readUriToSgfContent(uri: Uri): Pair<String?, String> {
+        val fileName = when (uri.scheme) {
+            "file" -> uri.lastPathSegment?.takeIf { it.lowercase(Locale.US).endsWith(".sgf") } ?: "opened.sgf"
+            "content" -> run {
+                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (nameIdx >= 0 && cursor.moveToFirst()) {
+                        cursor.getString(nameIdx) ?: "opened.sgf"
+                    } else "opened.sgf"
+                } ?: "opened.sgf"
+            }
+            else -> "opened.sgf"
+        }
+        val content = when (uri.scheme) {
+            "file" -> {
+                val path = uri.path ?: return Pair(null, fileName)
+                if (!path.lowercase(Locale.US).endsWith(".sgf")) return Pair(null, fileName)
+                try {
+                    File(path).readText(Charsets.UTF_8)
+                } catch (_: Exception) {
+                    return Pair(null, fileName)
+                }
+            }
+            "content" -> {
+                if (!fileName.lowercase(Locale.US).endsWith(".sgf")) return Pair(null, fileName)
+                try {
+                    contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() }
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            else -> null
+        }
+        return Pair(content, fileName)
     }
 }
