@@ -29,7 +29,7 @@ class GoBoardWidget extends StatelessWidget {
   final GoPoint? tentativePoint;
   final GoStone? tentativeStone;
   final List<GoPoint> hintPoints;
-  /// Per-point ownership from KataGo: row-major, -1 = black, 1 = white. Length boardSize². Drawn as tint overlay.
+  /// Per-point ownership in this project runtime: row-major, 1 = black, -1 = white. Length boardSize².
   final List<double>? ownership;
   final Color? boardBackgroundColor;
 
@@ -142,41 +142,6 @@ class _GoBoardPainter extends CustomPainter {
     final double gridSize = size.width - padding * 2;
     final double spacing = gridSize / (boardSize - 1);
 
-    // 四种势力色 + 不明（黄）：|v|<=0.2 不明，否则 非常黑/浅黑/非常白/浅白
-    if (ownership != null && ownership!.length >= boardSize * boardSize) {
-      const Color veryBlack = Color(0xF0181818);   // 非常贴近黑
-      const Color lightBlack = Color(0xF0606060); // 浅色贴近黑
-      const Color lightWhite = Color(0xF0C8C8C8); // 浅色贴近白
-      const Color veryWhite = Color(0xF0F0F0F0);  // 非常接近白
-      const Color uncertain = Color(0xF0E8C840);  // 不明：黄色
-      const double uncertainThreshold = 0.2;
-
-      for (int y = 0; y < boardSize; y++) {
-        for (int x = 0; x < boardSize; x++) {
-          final int idx = y * boardSize + x;
-          final double v = ownership![idx].clamp(-1.0, 1.0);
-          final Color color;
-          if (v.abs() <= uncertainThreshold) {
-            color = uncertain;
-          } else if (v > 0.5) {
-            color = veryBlack;
-          } else if (v > uncertainThreshold) {
-            color = lightBlack;
-          } else if (v < -0.5) {
-            color = veryWhite;
-          } else {
-            color = lightWhite;
-          }
-          final double left = x == 0 ? 0 : padding + (x - 0.5) * spacing;
-          final double top = y == 0 ? 0 : padding + (y - 0.5) * spacing;
-          final double right = x == boardSize - 1 ? size.width : padding + (x + 0.5) * spacing;
-          final double bottom = y == boardSize - 1 ? size.height : padding + (y + 0.5) * spacing;
-          final Paint paint = Paint()..color = color;
-          canvas.drawRect(Rect.fromLTRB(left, top, right, bottom), paint);
-        }
-      }
-    }
-
     final Paint linePaint = Paint()
       ..color = const Color(0xFF5B3A29)
       ..strokeWidth = 1;
@@ -201,6 +166,57 @@ class _GoBoardPainter extends CustomPainter {
       canvas.drawCircle(c, spacing * 0.09, starPaint);
     }
 
+    const double threshold = 0.35;
+    const Color blackFill = Color(0xFF2D2D2D);
+    const Color blackStroke = Color(0xFF161616);
+    const Color whiteFill = Color(0xFFECECEC);
+    const Color whiteStroke = Color(0xFF9E9E9E);
+    const double strokeWidth = 1.0;
+    final double halfS = (spacing * 0.11).clamp(2.2, 5.5);
+    final double halfM = (spacing * 0.16).clamp(3.0, 7.5);
+    final double halfL = (spacing * 0.22).clamp(4.0, 10.0);
+
+    double markerHalf(double strength) {
+      if (strength < 0.55) return halfS;
+      if (strength < 0.8) return halfM;
+      return halfL;
+    }
+
+    if (ownership != null && ownership!.length >= boardSize * boardSize) {
+      for (int y = 0; y < boardSize; y++) {
+        for (int x = 0; x < boardSize; x++) {
+          final int idx = y * boardSize + x;
+          final double v = ownership![idx].clamp(-1.0, 1.0);
+          if (v >= -threshold && v <= threshold) {
+            continue;
+          }
+          final double cx = padding + x * spacing;
+          final double cy = padding + y * spacing;
+          // Runtime verification in this project: positive ownership = black territory.
+          final bool isBlack = v > 0;
+          final double strength = isBlack ? v : -v;
+          double useHalf = markerHalf(strength);
+          // 白方格可覆盖交叉线/星位，视觉上更贴近参考图
+          if (!isBlack) {
+            useHalf *= 1.12;
+          }
+          final Rect rect = Rect.fromCenter(
+            center: Offset(cx, cy),
+            width: useHalf * 2,
+            height: useHalf * 2,
+          );
+          canvas.drawRect(rect, Paint()..color = isBlack ? blackFill : whiteFill);
+          canvas.drawRect(
+            rect,
+            Paint()
+              ..color = isBlack ? blackStroke : whiteStroke
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = strokeWidth,
+          );
+        }
+      }
+    }
+
     final double stoneRadius = spacing * 0.42;
     for (int y = 0; y < boardSize; y++) {
       for (int x = 0; x < boardSize; x++) {
@@ -210,6 +226,44 @@ class _GoBoardPainter extends CustomPainter {
         }
         final Offset c = Offset(padding + x * spacing, padding + y * spacing);
         _drawStone(canvas, c, stoneRadius, s);
+      }
+    }
+
+    if (ownership != null && ownership!.length >= boardSize * boardSize) {
+      for (int y = 0; y < boardSize; y++) {
+        for (int x = 0; x < boardSize; x++) {
+          final GoStone? s = board[y][x];
+          if (s == null) {
+            continue;
+          }
+          final int idx = y * boardSize + x;
+          final double v = ownership![idx].clamp(-1.0, 1.0);
+          final bool territoryIsBlack = v > threshold;
+          final bool territoryIsWhite = v < -threshold;
+          final bool dead = (s == GoStone.black && territoryIsWhite) ||
+              (s == GoStone.white && territoryIsBlack);
+          if (!dead) {
+            continue;
+          }
+          final double cx = padding + x * spacing;
+          final double cy = padding + y * spacing;
+          final bool isBlack = v > 0;
+          final double strength = isBlack ? -v : v;
+          final double deadHalf = markerHalf(strength).clamp(2.6, 8.2);
+          final Rect rect = Rect.fromCenter(
+            center: Offset(cx, cy),
+            width: deadHalf * 2,
+            height: deadHalf * 2,
+          );
+          canvas.drawRect(rect, Paint()..color = isBlack ? blackFill : whiteFill);
+          canvas.drawRect(
+            rect,
+            Paint()
+              ..color = isBlack ? blackStroke : whiteStroke
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = strokeWidth,
+          );
+        }
       }
     }
 
@@ -336,36 +390,68 @@ class _GoBoardPainter extends CustomPainter {
   void _drawStone(Canvas canvas, Offset center, double radius, GoStone stone) {
     final Rect rect = Rect.fromCircle(center: center, radius: radius);
     if (stone == GoStone.black) {
+      // 黑子立体感：左上高光、右下暗部，再加小高光点
       final RadialGradient blackGrad = RadialGradient(
-        center: const Alignment(-0.35, -0.35),
-        radius: 1.2,
+        center: const Alignment(-0.45, -0.45),
+        radius: 1.35,
         colors: const <Color>[
-          Color(0xFF505050),
-          Color(0xFF2A2A2A),
-          Color(0xFF0A0A0A),
+          Color(0xFF6A6A6A),
+          Color(0xFF3A3A3A),
+          Color(0xFF1A1A1A),
+          Color(0xFF080808),
         ],
-        stops: const <double>[0.0, 0.6, 1.0],
+        stops: const <double>[0.0, 0.25, 0.65, 1.0],
       );
       canvas.drawCircle(center, radius, Paint()..shader = blackGrad.createShader(rect));
-    } else {
-      final RadialGradient whiteGrad = RadialGradient(
-        center: const Alignment(-0.4, -0.4),
-        radius: 1.15,
-        colors: const <Color>[
-          Color(0xFFFFFFFF),
-          Color(0xFFF0F0F0),
-          Color(0xFFD8D8D8),
-        ],
-        stops: const <double>[0.0, 0.5, 1.0],
+      final double specRadius = radius * 0.32;
+      final Offset specCenter = center + Offset(-radius * 0.35, -radius * 0.35);
+      final Rect specRect = Rect.fromCircle(center: specCenter, radius: specRadius);
+      final RadialGradient specGrad = RadialGradient(
+        center: Alignment.center,
+        radius: 1.0,
+        colors: const <Color>[Color(0xFF9A9A9A), Color(0x00000000)],
+        stops: const <double>[0.0, 1.0],
       );
-      canvas.drawCircle(center, radius, Paint()..shader = whiteGrad.createShader(rect));
+      canvas.drawCircle(specCenter, specRadius, Paint()..shader = specGrad.createShader(specRect));
       canvas.drawCircle(
         center,
         radius,
         Paint()
-          ..color = const Color(0xFF404040)
+          ..color = const Color(0xFF0A0A0A)
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1,
+          ..strokeWidth = 0.8,
+      );
+    } else {
+      // 白子立体感：左上高光、右下微灰阴影，加清晰轮廓与小高光点
+      final RadialGradient whiteGrad = RadialGradient(
+        center: const Alignment(-0.5, -0.5),
+        radius: 1.4,
+        colors: const <Color>[
+          Color(0xFFFFFFFF),
+          Color(0xFFF8F8F8),
+          Color(0xFFE8E8E8),
+          Color(0xFFD0D0D0),
+        ],
+        stops: const <double>[0.0, 0.2, 0.6, 1.0],
+      );
+      canvas.drawCircle(center, radius, Paint()..shader = whiteGrad.createShader(rect));
+      final double specRadius = radius * 0.28;
+      final Offset specCenter = center + Offset(-radius * 0.4, -radius * 0.4);
+      final Rect specRect = Rect.fromCircle(center: specCenter, radius: specRadius);
+      final RadialGradient specGrad = RadialGradient(
+        center: Alignment.center,
+        radius: 1.0,
+        colors: const <Color>[Color(0xFFFFFFFF), Color(0x00FFFFFF)],
+        stops: const <double>[0.0, 1.0],
+      );
+      canvas.drawCircle(specCenter, specRadius, Paint()..shader = specGrad.createShader(specRect));
+      canvas.drawCircle(
+        center,
+        radius,
+        Paint()
+          ..color = const Color(0xFF707070)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2,
       );
     }
   }

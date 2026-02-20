@@ -250,6 +250,8 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   final List<GoGameState> _history = <GoGameState>[];
   List<GoPoint> _handicapStones = <GoPoint>[];
   GoScore? _finalScore;
+  /// 终局结果文案，仅由局势分析（winrate/scoreLead）得出；不拿数目判断胜负。
+  String? _finalResultTextFromAnalysis;
   String? _resignResultText;
   GoPoint? _pendingPoint;
   GoStone _playerStone = GoStone.black;
@@ -407,6 +409,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     _game = initial;
     _handicapStones = handicap;
     _finalScore = null;
+    _finalResultTextFromAnalysis = null;
     _resignResultText = null;
     _pendingPoint = null;
     _blackWinrate = null;
@@ -683,13 +686,13 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     }
   }
 
-  /// Uses KataGo ownership for precise 数目 when both players passed.
+  /// 终局时用局势分析（winrate/scoreLead）判定胜负，数目仅用于显示黑地/白地。
   Future<void> _finishGameWithOwnership() async {
     if (_game == null || _game!.consecutivePasses < 2) {
       return;
     }
     setState(() {
-      _status = '正在数目...';
+      _status = '正在分析终局...';
     });
     try {
       final List<String> moveTokens = _game!.moves
@@ -719,11 +722,28 @@ class _AIBattlePageState extends State<_AIBattlePage> {
           timeoutMs: _timeoutBudgetMsForProfile(profile),
         ),
       );
+      // 用局势分析判定胜负，不用数目
+      final double blackWr =
+          _normalizeBlackWinrate(res.winrate, res.scoreLead);
+      final double leadForBlack = _game!.toPlay == GoStone.black
+          ? res.scoreLead
+          : -res.scoreLead;
+      String resultText;
+      if (blackWr > 0.5) {
+        resultText =
+            '黑胜 ${leadForBlack.clamp(0.0, double.infinity).toStringAsFixed(1)} 目';
+      } else if (blackWr < 0.5) {
+        resultText =
+            '白胜 ${(-leadForBlack).clamp(0.0, double.infinity).toStringAsFixed(1)} 目';
+      } else {
+        resultText = '和棋';
+      }
       final GoScore? score = _scoreFromOwnership(res.ownership);
       if (mounted) {
         setState(() {
           _finalScore = score ?? _game!.scoreByRules(_rules);
-          _status = '终局: ${_finalScore!.winnerText()}';
+          _finalResultTextFromAnalysis = resultText;
+          _status = '终局: $resultText';
         });
         unawaited(_persistSession());
       }
@@ -731,7 +751,8 @@ class _AIBattlePageState extends State<_AIBattlePage> {
       if (mounted) {
         setState(() {
           _finalScore = _game!.scoreByRules(_rules);
-          _status = '终局: ${_finalScore!.winnerText()}';
+          _finalResultTextFromAnalysis = null;
+          _status = '终局: 分析失败（仅显示数目）';
         });
         unawaited(_persistSession());
       }
@@ -758,8 +779,8 @@ class _AIBattlePageState extends State<_AIBattlePage> {
         final GoStone? s = _game!.board[y][x];
         final int idx = y * widget.boardSize + x;
         final double v = idx < ownership.length ? ownership[idx] : 0.0;
-        final bool belongsToBlack = v < -_ownershipThreshold;
-        final bool belongsToWhite = v > _ownershipThreshold;
+        final bool belongsToBlack = v > _ownershipThreshold;
+        final bool belongsToWhite = v < -_ownershipThreshold;
         if (s == GoStone.black) {
           if (belongsToBlack) {
             livingBlackStones++;
@@ -814,6 +835,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
       _game = _history.last;
       _pendingPoint = null;
       _finalScore = null;
+      _finalResultTextFromAnalysis = null;
       _resignResultText = null;
       _status = '已悔棋';
       _startClockFor(_game!.toPlay);
@@ -978,7 +1000,9 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     final StringBuffer sb = StringBuffer();
     final String result =
         _resignResultText ??
-        (_finalScore != null ? _finalScore!.winnerText() : '?');
+        (_finalScore != null
+            ? (_finalResultTextFromAnalysis ?? '?')
+            : '?');
     sb.write('(;GM[1]FF[4]');
     sb.write('SZ[${widget.boardSize}]');
     sb.write('KM[${_rules.komi}]');
@@ -1046,6 +1070,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
               'whiteArea': _finalScore!.whiteArea,
               'komi': _finalScore!.komi,
             },
+      'finalResultTextFromAnalysis': _finalResultTextFromAnalysis,
       'resignResult': _resignResultText,
       'blackMs': _clockValue(GoStone.black).inMilliseconds,
       'whiteMs': _clockValue(GoStone.white).inMilliseconds,
@@ -1196,6 +1221,8 @@ class _AIBattlePageState extends State<_AIBattlePage> {
               )),
         );
       _status = data['status'] as String? ?? '已恢复上局';
+      _finalResultTextFromAnalysis =
+          data['finalResultTextFromAnalysis'] as String?;
       _resignResultText = data['resignResult'] as String?;
 
       final Map<String, dynamic>? score =
@@ -1780,7 +1807,9 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                         if (_finalScore != null) ...<Widget>[
                           const SizedBox(height: 4),
                           Text(
-                            '终局结果: ${_finalScore!.winnerText()}（黑地${_finalScore!.blackTerritory}，白地${_finalScore!.whiteTerritory}）',
+                            _finalResultTextFromAnalysis != null
+                                ? '终局结果: $_finalResultTextFromAnalysis（黑地${_finalScore!.blackTerritory}，白地${_finalScore!.whiteTerritory}）'
+                                : '终局结果: 分析失败（黑地${_finalScore!.blackTerritory}，白地${_finalScore!.whiteTerritory}）',
                           ),
                         ],
                         if (_resignResultText != null) ...<Widget>[

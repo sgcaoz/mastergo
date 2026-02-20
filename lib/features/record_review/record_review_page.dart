@@ -5,6 +5,7 @@ import 'dart:io' show Directory, File, FileSystemEntity, Platform;
 import 'package:external_path/external_path.dart';
 import 'package:path/path.dart' as p;
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
@@ -134,12 +135,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   final Map<int, double> _winrates = <int, double>{};
   String? _status;
   String? _recordId;
-  String _recordSource = 'import';
+  String _recordSource = 'download';
 
   bool get _isBattleRecord =>
       _recordSource == 'battle_local' || _recordSource == 'battle_temp';
   bool get _isThirdPartyRecord =>
-      _recordSource == 'import' ||
+      _recordSource == 'import' || // legacy compatibility
       _recordSource == 'download' ||
       _recordSource == 'master';
 
@@ -221,8 +222,30 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   }
 
   Widget _buildRecordList(String source) {
+    final Future<List<GameRecord>> future =
+        _sourceFutures[source] ??= () async {
+          if (source != 'download') {
+            return _recordRepository.listBySource(source);
+          }
+          // 单一可见列表：下载页兼容展示历史 import 与当前 download。
+          final List<GameRecord> download = await _recordRepository.listBySource(
+            'download',
+          );
+          final List<GameRecord> legacyImport = await _recordRepository
+              .listBySource('import');
+          final Map<String, GameRecord> merged = <String, GameRecord>{};
+          for (final GameRecord r in <GameRecord>[...download, ...legacyImport]) {
+            final GameRecord? old = merged[r.id];
+            if (old == null || r.updatedAtMs > old.updatedAtMs) {
+              merged[r.id] = r;
+            }
+          }
+          final List<GameRecord> list = merged.values.toList()
+            ..sort((GameRecord a, GameRecord b) => b.updatedAtMs.compareTo(a.updatedAtMs));
+          return list;
+        }();
     return FutureBuilder<List<GameRecord>>(
-      future: _sourceFutures[source] ??= _recordRepository.listBySource(source),
+      future: future,
       builder: (BuildContext context, AsyncSnapshot<List<GameRecord>> snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
@@ -313,8 +336,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     setState(() {
       _sourceFutures
         ..remove('battle_local')
-        ..remove('download')
-        ..remove('import');
+        ..remove('download');
       _status = '已删除 1 条棋谱';
     });
   }
@@ -352,8 +374,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     setState(() {
       _sourceFutures
         ..remove('battle_local')
-        ..remove('download')
-        ..remove('import');
+        ..remove('download');
       _status = '已删除 ${_selectedIds.length} 条棋谱';
       _selectedIds.clear();
       _selectMode = false;
@@ -383,7 +404,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
 
   Widget _buildLibraryHome(BuildContext context) {
     return DefaultTabController(
-      length: 4,
+      length: 3,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -419,7 +440,6 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
             tabs: <Tab>[
               Tab(text: '本机对局'),
               Tab(text: '下载棋谱'),
-              Tab(text: '导入棋谱'),
               Tab(text: '名局'),
             ],
           ),
@@ -428,7 +448,6 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
               children: <Widget>[
                 _buildRecordList('battle_local'),
                 _buildRecordList('download'),
-                _buildRecordList('import'),
                 FutureBuilder<List<GameRecord>>(
                   future: _loadMasterGamesFromDb(),
                   builder:
@@ -665,7 +684,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         parsed.rules.isEmpty ? _ruleset : rulePresetFromString(parsed.rules).id;
     final GameRecord? existing =
         await _recordRepository.findImportBySgfContent(content);
-    final String recordId = existing?.id ?? _recordRepository.newId(prefix: 'import');
+    final String recordId = existing?.id ?? _recordRepository.newId(prefix: 'download');
     final String winrateJson =
         existing?.winrateJson ?? jsonEncode(<String, double>{});
     setState(() {
@@ -678,7 +697,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _status = existing != null ? '已更新 $fileName（同棋谱去重）' : '已导入 $fileName';
     });
     _recordId = recordId;
-    _recordSource = 'import';
+    _recordSource = 'download';
     await _recordRepository.saveOrUpdateSourceRecord(
       id: recordId,
       source: _recordSource,
@@ -692,7 +711,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     );
     unawaited(saveSgfToDownloadDirectory(content, fileName));
     if (mounted) {
-      setState(() => _sourceFutures.remove('import'));
+      setState(() => _sourceFutures.remove('download'));
     }
     if (existing != null && existing.winrateJson.isNotEmpty) {
       try {
@@ -1527,7 +1546,7 @@ class _ImportSgfPageState extends State<_ImportSgfPage> {
         _ImportResult(
           sgf: content,
           title: title,
-          source: 'import',
+          source: 'download',
           ruleset: ruleset,
           komi: parsed.komi,
         ),

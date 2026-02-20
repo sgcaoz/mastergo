@@ -129,11 +129,15 @@ class GameRecordRepository {
     return rows.map(GameRecord.fromMap).toList();
   }
 
-  /// 在 source='import' 中查找 SGF 内容相同的记录，用于去重（同棋谱只保留一条，更新而非新增）。
+  /// 在第三方棋谱记录中查找 SGF 内容相同的记录，用于去重（同棋谱只保留一条，更新而非新增）。
+  /// 兼容历史：优先 download，同时纳入 legacy import。
   Future<GameRecord?> findImportBySgfContent(String sgfContent) async {
     final String normalized = sgfContent.trim();
     if (normalized.isEmpty) return null;
-    final List<GameRecord> list = await listBySource('import', limit: 500);
+    final List<GameRecord> list = <GameRecord>[
+      ...await listBySource('download', limit: 500),
+      ...await listBySource('import', limit: 500),
+    ];
     for (final GameRecord r in list) {
       if (r.sgf.trim() == normalized) return r;
     }

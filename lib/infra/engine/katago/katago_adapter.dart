@@ -50,7 +50,7 @@ class KatagoAnalyzeResult {
   final String bestMove;
   final List<KatagoMoveCandidate> topCandidates;
   final List<String> topMoves;
-  /// Per-point ownership from KataGo: row-major, -1 = black territory, 1 = white. Length boardSize².
+  /// Per-point ownership from KataGo in this project runtime: row-major, 1 = black territory, -1 = white. Length boardSize².
   final List<double>? ownership;
 }
 

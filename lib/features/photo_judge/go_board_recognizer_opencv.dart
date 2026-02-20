@@ -293,6 +293,9 @@ RecognizedBoard? recognizeGoBoardFromBytes(Uint8List imageBytes, int boardSize) 
       board: board,
       blackCount: blackCount,
       whiteCount: whiteCount,
+      corners: ordered
+          .map((cv.Point p) => GoPointF(p.x.toDouble(), p.y.toDouble()))
+          .toList(),
     );
   } catch (_) {
     return null;
@@ -463,10 +466,18 @@ class RecognizedBoard {
     required this.board,
     required this.blackCount,
     required this.whiteCount,
+    this.corners = const <GoPointF>[],
   });
 
   final int boardSize;
   final List<List<GoStone?>> board;
   final int blackCount;
   final int whiteCount;
+  final List<GoPointF> corners;
+}
+
+class GoPointF {
+  const GoPointF(this.x, this.y);
+  final double x;
+  final double y;
 }
