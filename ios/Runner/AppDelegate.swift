@@ -225,6 +225,7 @@ import Darwin
     let thinkingTimeMs = (args["thinkingTimeMs"] as? Int) ?? 1200
     let timeoutOverrideMs = args["timeoutMs"] as? Int
     let boardSize = (args["boardSize"] as? Int) ?? 19
+    let initialPlayer = (args["initialPlayer"] as? String) ?? "B"
     let komi = (args["komi"] as? Double) ?? 7.5
     let ruleset = (args["ruleset"] as? String) ?? "chinese"
     let moves = (args["moves"] as? [String]) ?? []
@@ -237,6 +238,7 @@ import Darwin
       "komi": komi,
       "boardXSize": boardSize,
       "boardYSize": boardSize,
+      "initialPlayer": initialPlayer,
       "maxVisits": maxVisits,
       "moves": parseTokenArray(tokens: moves),
       "initialStones": parseTokenArray(tokens: initialStones),

@@ -1,463 +1,394 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:ui' show Offset;
 
-import 'package:opencv_dart/opencv_dart.dart' as cv;
 import 'package:mastergo/domain/go/go_types.dart';
+import 'package:opencv_dart/opencv_dart.dart' as cv;
 
-/// 支持的棋盘尺寸，用于自动检测时在候选中选择。
-const List<int> kSupportedBoardSizes = <int>[19, 13, 9];
+const int _maxImageDim = 1280;
 
-/// 不选棋盘尺寸时使用：先定位棋盘并透视校正，再根据网格周期推断 9/13/19。
-RecognizedBoard? recognizeGoBoardFromBytesAutoSize(Uint8List imageBytes) {
-  if (imageBytes.isEmpty) return null;
-  cv.Mat? frame;
-  cv.Mat? gray;
-  cv.Mat? blurred;
-  cv.Mat? canny;
-  cv.Mat? birdsEye;
-  cv.Mat? transformM;
+enum BoardRecognitionStrategy {
+  noClahe,
+  withClahe,
+}
+
+extension BoardRecognitionStrategyLabel on BoardRecognitionStrategy {
+  String get label => this == BoardRecognitionStrategy.noClahe ? '默认（无CLAHE）' : '额外策略（CLAHE）';
+}
+
+/// 解码并预缩放大图，降低移动端内存压力。
+(Uint8List, int, int)? prepareImageBytes(Uint8List imageBytes) {
+  cv.Mat? img;
   try {
-    frame = cv.imdecode(imageBytes, cv.IMREAD_COLOR);
-    if (frame.isEmpty) return null;
-    gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY);
-    blurred = cv.gaussianBlur(gray, (5, 5), 0);
-    canny = cv.canny(blurred, 50, 150);
-    const int mode = 0;
-    const int method = 2;
-    final (cv.Contours contours, _) = cv.findContours(canny, mode, method);
-    final int imgW = frame.cols;
-    final int imgH = frame.rows;
-    final double imgArea = (imgW * imgH).toDouble();
-    double bestScore = -1;
-    List<cv.Point>? ordered;
-    for (int i = 0; i < contours.length; i++) {
-      final cv.VecPoint c = contours.elementAt(i);
-      final double len = cv.arcLength(c, true);
-      if (len < 100) continue;
-      final double epsilon = len * 0.02;
-      final cv.VecPoint approx = cv.approxPolyDP(c, epsilon, true);
-      if (approx.length == 4) {
-        final List<cv.Point> candidate = _orderFourPoints(approx);
-        final _QuadMetrics m = _quadMetrics(candidate);
-        const int edgeMargin = 10;
-        final bool nearImageEdge =
-            m.minX <= edgeMargin ||
-            m.minY <= edgeMargin ||
-            m.maxX >= imgW - edgeMargin ||
-            m.maxY >= imgH - edgeMargin;
-        if (nearImageEdge) continue;
-        final double areaRatio = m.area / imgArea;
-        if (areaRatio < 0.08 || areaRatio > 0.95) continue;
-        if (m.aspect < 0.65 || m.aspect > 1.55) continue;
-        final double squarePenalty = 1.0 - (m.aspect - 1.0).abs().clamp(0.0, 1.0);
-        final double score = areaRatio * 1000 + squarePenalty * 120 + len * 0.02;
-        if (score > bestScore) {
-          bestScore = score;
-          ordered = candidate;
-        }
-      }
+    img = cv.imdecode(imageBytes, cv.IMREAD_COLOR);
+    int w = img.cols;
+    int h = img.rows;
+    if (w <= 0 || h <= 0) {
+      img.dispose();
+      return null;
     }
-    if (ordered == null || ordered.length != 4) return null;
-    const int outSize = 640;
-    final cv.VecPoint srcPoints = cv.VecPoint.fromList(ordered);
-    final cv.VecPoint dstPoints = cv.VecPoint.fromList([
-      cv.Point(0, 0),
-      cv.Point(outSize, 0),
-      cv.Point(outSize, outSize),
-      cv.Point(0, outSize),
-    ]);
-    transformM = cv.getPerspectiveTransform(srcPoints, dstPoints);
-    birdsEye = cv.warpPerspective(frame, transformM, (outSize, outSize));
-    final cv.Mat warpedGray = cv.cvtColor(birdsEye, cv.COLOR_BGR2GRAY);
-    final int detected = _detectBoardSizeFromWarped(warpedGray);
-    warpedGray.dispose();
-    if (detected < 5) return null;
-    return recognizeGoBoardFromBytes(imageBytes, detected);
+    if (w > _maxImageDim || h > _maxImageDim) {
+      final double scale = _maxImageDim / (w > h ? w : h);
+      final int nw = (w * scale).round().clamp(1, 4096);
+      final int nh = (h * scale).round().clamp(1, 4096);
+      final cv.Mat resized = cv.resize(img, (nw, nh));
+      img.dispose();
+      img = resized;
+      w = nw;
+      h = nh;
+    }
+    final (bool ok, Uint8List out) = cv.imencode('.jpg', img);
+    img.dispose();
+    if (!ok) return null;
+    return (out, w, h);
   } catch (_) {
+    img?.dispose();
     return null;
-  } finally {
-    frame?.dispose();
-    gray?.dispose();
-    blurred?.dispose();
-    canny?.dispose();
-    birdsEye?.dispose();
-    transformM?.dispose();
   }
 }
 
-/// 从透视校正后的灰度图推断棋盘路数：根据行/列方向的暗线间隔计算，取 9/13/19 中最近值。
-int _detectBoardSizeFromWarped(cv.Mat gray) {
-  const int borderPx = 26;
-  const int outSize = 640;
-  final int inner = outSize - 2 * borderPx;
-  if (gray.rows < outSize || gray.cols < outSize) return 0;
-  final List<double> rowProfile = <double>[];
-  for (int x = borderPx; x < outSize - borderPx; x++) {
-    double sum = 0;
-    for (int y = borderPx; y < outSize - borderPx; y++) {
-      final List<num> p = gray.atPixel(y, x);
-      sum += p.isEmpty ? 0 : p[0].toDouble();
-    }
-    rowProfile.add(sum);
+List<Offset> defaultBoardCorners(int imgWidth, int imgHeight) {
+  const double marginRatio = 0.05;
+  final double x0 = imgWidth * marginRatio;
+  final double y0 = imgHeight * marginRatio;
+  final double x1 = imgWidth - x0;
+  final double y1 = imgHeight - y0;
+  return <Offset>[
+    Offset(x0, y0),
+    Offset(x1, y0),
+    Offset(x1, y1),
+    Offset(x0, y1),
+  ];
+}
+
+List<Offset>? detectBoardCorners(Uint8List imageBytes) {
+  final cv.Mat img = cv.imdecode(imageBytes, cv.IMREAD_COLOR);
+  if (img.rows <= 0 || img.cols <= 0) {
+    img.dispose();
+    return null;
   }
-  final double mean = rowProfile.reduce((double a, double b) => a + b) / rowProfile.length;
-  final List<int> valleys = <int>[];
-  for (int i = 2; i < rowProfile.length - 2; i++) {
-    final double v = rowProfile[i];
-    if (v < mean && v < rowProfile[i - 1] && v < rowProfile[i + 1] &&
-        v <= rowProfile[i - 2] && v <= rowProfile[i + 2]) {
-      valleys.add(i);
+  final double w = img.cols.toDouble();
+  final double h = img.rows.toDouble();
+  try {
+    final List<cv.Point>? pts = _findBoardCornersHSV(img);
+    if (pts == null || pts.isEmpty) return null;
+    final cv.VecPoint ordered = _orderQuadPoints(pts);
+    final List<cv.Point> list = ordered.toList();
+    ordered.dispose();
+    return list
+        .map(
+          (cv.Point p) => Offset(
+            p.x.toDouble().clamp(0.0, w),
+            p.y.toDouble().clamp(0.0, h),
+          ),
+        )
+        .toList();
+  } catch (_) {
+    return null;
+  } finally {
+    img.dispose();
+  }
+}
+
+RecognizedBoard? recognizeGoBoardWithCorners(
+  Uint8List imageBytes,
+  List<Offset> corners, {
+  int boardSize = 19,
+  int warpedSize = 760,
+  BoardRecognitionStrategy strategy = BoardRecognitionStrategy.noClahe,
+}) {
+  if (corners.length != 4) return null;
+  final cv.Mat img = cv.imdecode(imageBytes, cv.IMREAD_COLOR);
+  if (img.rows <= 0 || img.cols <= 0) return null;
+  try {
+    final cv.VecPoint srcPts = cv.VecPoint.fromList(<cv.Point>[
+      cv.Point(corners[0].dx.round(), corners[0].dy.round()),
+      cv.Point(corners[1].dx.round(), corners[1].dy.round()),
+      cv.Point(corners[2].dx.round(), corners[2].dy.round()),
+      cv.Point(corners[3].dx.round(), corners[3].dy.round()),
+    ]);
+    final cv.VecPoint dstPts = cv.VecPoint.fromList(<cv.Point>[
+      cv.Point(0, 0),
+      cv.Point(warpedSize, 0),
+      cv.Point(warpedSize, warpedSize),
+      cv.Point(0, warpedSize),
+    ]);
+    final cv.Mat h = cv.getPerspectiveTransform(srcPts, dstPts);
+    final cv.Mat boardMat = cv.warpPerspective(img, h, (warpedSize, warpedSize));
+    h.dispose();
+    srcPts.dispose();
+    dstPts.dispose();
+    img.dispose();
+
+    cv.Mat gray = cv.cvtColor(boardMat, cv.COLOR_BGR2GRAY);
+    if (strategy == BoardRecognitionStrategy.withClahe) {
+      try {
+        final cv.CLAHE clahe = cv.CLAHE.create();
+        clahe.clipLimit = 2.0;
+        final cv.Mat enhanced = clahe.apply(gray);
+        clahe.dispose();
+        gray.dispose();
+        gray = enhanced;
+      } catch (_) {}
+    }
+    final cv.Mat blurred = cv.gaussianBlur(gray, (7, 7), 1.5);
+    gray.dispose();
+
+    final _HoughResult? hough = _recognizeByHoughOtsu(blurred, boardSize, warpedSize);
+    blurred.dispose();
+    boardMat.dispose();
+    if (hough == null) return null;
+
+    return RecognizedBoard(
+      boardSize: boardSize,
+      board: hough.board,
+      blackCount: hough.blackCount,
+      whiteCount: hough.whiteCount,
+      corners: corners.map((Offset p) => GoPointF(p.dx, p.dy)).toList(),
+    );
+  } catch (_) {
+    img.dispose();
+    return null;
+  }
+}
+
+class _CircleSnap {
+  _CircleSnap({
+    required this.row,
+    required this.col,
+    required this.gMean,
+    required this.dist,
+  });
+
+  final int row;
+  final int col;
+  final double gMean;
+  final double dist;
+}
+
+class _HoughResult {
+  _HoughResult({
+    required this.board,
+    required this.blackCount,
+    required this.whiteCount,
+  });
+
+  final List<List<GoStone?>> board;
+  final int blackCount;
+  final int whiteCount;
+}
+
+_HoughResult? _recognizeByHoughOtsu(
+  cv.Mat blurredGray,
+  int boardSize,
+  int warpedSize,
+) {
+  final double mar = warpedSize * (20.0 / 760.0);
+  final double cell = (warpedSize - mar * 2) / (boardSize - 1);
+  final double expectedR = cell * 0.44;
+  final int minR = (expectedR * 0.5).round().clamp(4, 80);
+  final int maxR = (expectedR * 1.5).round().clamp(minR + 1, 100);
+  final double minDist = cell * 0.65;
+
+  final cv.Mat circles = cv.HoughCircles(
+    blurredGray,
+    cv.HOUGH_GRADIENT,
+    1.0,
+    minDist,
+    param1: 80.0,
+    param2: 22.0,
+    minRadius: minR,
+    maxRadius: maxR,
+  );
+
+  if (circles.rows * circles.cols <= 0 || circles.channels < 3) {
+    circles.dispose();
+    return null;
+  }
+
+  final Map<String, _CircleSnap> snaps = <String, _CircleSnap>{};
+  final double snapR = cell * 0.70;
+  final int total = circles.rows * circles.cols;
+  final cv.Mat flat = circles.reshape(1, total);
+  for (int i = 0; i < total; i++) {
+    final double cx = flat.atF32(i, i1: 0);
+    final double cy = flat.atF32(i, i1: 1);
+    final double r = flat.atF32(i, i1: 2).abs();
+
+    final int col0 = ((cx - mar) / cell).floor();
+    final int row0 = ((cy - mar) / cell).floor();
+
+    double bestDist = 1e18;
+    int bestRow = -1;
+    int bestCol = -1;
+    for (int dr = 0; dr <= 1; dr++) {
+      for (int dc = 0; dc <= 1; dc++) {
+        final int row = row0 + dr;
+        final int col = col0 + dc;
+        if (row < 0 || row >= boardSize || col < 0 || col >= boardSize) continue;
+        final double gx = mar + col * cell;
+        final double gy = mar + row * cell;
+        final double d = math.sqrt((cx - gx) * (cx - gx) + (cy - gy) * (cy - gy));
+        if (d < bestDist) {
+          bestDist = d;
+          bestRow = row;
+          bestCol = col;
+        }
+      }
+    }
+    if (bestRow < 0 || bestDist > snapR) continue;
+    final double gMean = _sampleCircleMean(blurredGray, cx, cy, r);
+    final String key = '$bestRow:$bestCol';
+    final _CircleSnap? prev = snaps[key];
+    if (prev == null || bestDist < prev.dist) {
+      snaps[key] = _CircleSnap(
+        row: bestRow,
+        col: bestCol,
+        gMean: gMean,
+        dist: bestDist,
+      );
     }
   }
-  int period = inner;
-  if (valleys.length >= 2) {
-    int sumGap = 0;
-    int count = 0;
-    for (int i = 1; i < valleys.length; i++) {
-      sumGap += valleys[i] - valleys[i - 1];
+  flat.dispose();
+  circles.dispose();
+
+  if (snaps.isEmpty) return null;
+
+  final double split = _otsuSplit(snaps.values.map((e) => e.gMean).toList());
+  final List<List<GoStone?>> board = List<List<GoStone?>>.generate(
+    boardSize,
+    (_) => List<GoStone?>.filled(boardSize, null),
+  );
+  int blackCount = 0;
+  int whiteCount = 0;
+  for (final _CircleSnap s in snaps.values) {
+    if (s.gMean < split) {
+      board[s.row][s.col] = GoStone.black;
+      blackCount++;
+    } else {
+      board[s.row][s.col] = GoStone.white;
+      whiteCount++;
+    }
+  }
+  return _HoughResult(
+    board: board,
+    blackCount: blackCount,
+    whiteCount: whiteCount,
+  );
+}
+
+double _sampleCircleMean(cv.Mat gray, double cx, double cy, double r) {
+  final int rr = (r * 0.60).round().clamp(2, 24);
+  double sum = 0;
+  int count = 0;
+  final int x0 = cx.round();
+  final int y0 = cy.round();
+  for (int dy = -rr; dy <= rr; dy++) {
+    for (int dx = -rr; dx <= rr; dx++) {
+      if (dx * dx + dy * dy > rr * rr) continue;
+      final int x = x0 + dx;
+      final int y = y0 + dy;
+      if (x < 0 || y < 0 || x >= gray.cols || y >= gray.rows) continue;
+      sum += gray.at<int>(y, x).toDouble();
       count++;
     }
-    if (count > 0) {
-      period = sumGap ~/ count;
-    }
   }
-  if (period < 5) period = inner ~/ 18;
-  final int n = (inner / period).round() + 1;
-  int best = 19;
-  int bestDiff = (n - 19).abs();
-  for (final int size in kSupportedBoardSizes) {
-    final int d = (n - size).abs();
-    if (d < bestDiff) {
-      bestDiff = d;
-      best = size;
+  return count > 0 ? sum / count : 128.0;
+}
+
+double _otsuSplit(List<double> values) {
+  if (values.length < 2) return 128.0;
+  final List<double> arr = List<double>.from(values)..sort();
+  double bestVar = -1;
+  double best = (arr.first + arr.last) * 0.5;
+  for (int t = 0; t < arr.length - 1; t++) {
+    final List<double> lo = arr.sublist(0, t + 1);
+    final List<double> hi = arr.sublist(t + 1);
+    if (lo.isEmpty || hi.isEmpty) continue;
+    final double mLo = lo.reduce((double a, double b) => a + b) / lo.length;
+    final double mHi = hi.reduce((double a, double b) => a + b) / hi.length;
+    final double between = lo.length * hi.length * (mLo - mHi) * (mLo - mHi) / ((lo.length + hi.length) * (lo.length + hi.length));
+    if (between > bestVar) {
+      bestVar = between;
+      best = (arr[t] + arr[t + 1]) * 0.5;
     }
   }
   return best;
 }
 
-/// 基于棋盘边界与线条的识别：不依赖棋盘颜色。
-/// 流程：灰度 → 边缘检测 → 轮廓 → 最大四边形即棋盘 → 透视校正 → 等分网格 → 交叉点局部采样判棋子。
-RecognizedBoard? recognizeGoBoardFromBytes(Uint8List imageBytes, int boardSize) {
-  if (imageBytes.isEmpty) return null;
+List<cv.Point>? _findBoardCornersHSV(cv.Mat img) {
+  final double scale = 640.0 / img.cols;
+  final int smallW = 640;
+  final int smallH = (img.rows * scale).round();
+  final cv.Mat small = cv.resize(img, (smallW, smallH));
+  final cv.Mat hsv = cv.cvtColor(small, cv.COLOR_BGR2HSV);
+  small.dispose();
 
-  cv.Mat? frame;
-  cv.Mat? gray;
-  cv.Mat? blurred;
-  cv.Mat? canny;
-  cv.Mat? birdsEye;
-  cv.Mat? warpedHsv;
-  cv.Mat? warpedBlur;
-  cv.Mat? transformM;
-  try {
-    frame = cv.imdecode(imageBytes, cv.IMREAD_COLOR);
-    if (frame.isEmpty) return null;
+  final cv.Scalar lower = cv.Scalar(10, 15, 100, 0);
+  final cv.Scalar upper = cv.Scalar(40, 160, 245, 0);
+  final cv.Mat mask = cv.inRangebyScalar(hsv, lower, upper);
+  hsv.dispose();
 
-    // 1) 棋盘定位：只看边缘与边界，不依赖颜色
-    gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY);
-    blurred = cv.gaussianBlur(gray, (5, 5), 0);
-    canny = cv.canny(blurred, 50, 150);
+  final cv.Mat kClose = cv.getStructuringElement(cv.MORPH_RECT, (25, 25));
+  final cv.Mat closed = cv.morphologyEx(mask, cv.MORPH_CLOSE, kClose);
+  mask.dispose();
+  kClose.dispose();
 
-    const int mode = 0; // RETR_EXTERNAL
-    const int method = 2; // CHAIN_APPROX_SIMPLE
-    final (cv.Contours contours, _) = cv.findContours(canny, mode, method);
+  final (cv.Contours contours, _) = cv.findContours(closed, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+  closed.dispose();
+  if (contours.isEmpty) return null;
 
-    final int imgW = frame.cols;
-    final int imgH = frame.rows;
-    final double imgArea = (imgW * imgH).toDouble();
-    double bestScore = -1;
-    List<cv.Point>? ordered;
-    for (int i = 0; i < contours.length; i++) {
-      final cv.VecPoint c = contours.elementAt(i);
-      final double len = cv.arcLength(c, true);
-      if (len < 100) continue;
-      final double epsilon = len * 0.02;
-      final cv.VecPoint approx = cv.approxPolyDP(c, epsilon, true);
-      if (approx.length == 4) {
-        final List<cv.Point> candidate = _orderFourPoints(approx);
-        final _QuadMetrics m = _quadMetrics(candidate);
-        // 排除贴近整张照片边框的假四边形（常见误检）
-        const int edgeMargin = 10;
-        final bool nearImageEdge =
-            m.minX <= edgeMargin ||
-            m.minY <= edgeMargin ||
-            m.maxX >= imgW - edgeMargin ||
-            m.maxY >= imgH - edgeMargin;
-        if (nearImageEdge) continue;
-        final double areaRatio = m.area / imgArea;
-        // 围棋棋盘一般接近正方形且在画面中占一定面积
-        if (areaRatio < 0.08 || areaRatio > 0.95) continue;
-        if (m.aspect < 0.65 || m.aspect > 1.55) continue;
-        // 面积优先，形状越接近正方形得分越高
-        final double squarePenalty = 1.0 - (m.aspect - 1.0).abs().clamp(0.0, 1.0);
-        final double score = areaRatio * 1000 + squarePenalty * 120 + len * 0.02;
-        if (score > bestScore) {
-          bestScore = score;
-          ordered = candidate;
-        }
-      }
-    }
-
-    if (ordered == null || ordered.length != 4) return null;
-
-    // 2) 透视校正 → 正视图
-    final cv.VecPoint srcPoints = cv.VecPoint.fromList(ordered);
-    const int outSize = 640;
-    final cv.VecPoint dstPoints = cv.VecPoint.fromList([
-      cv.Point(0, 0),
-      cv.Point(outSize, 0),
-      cv.Point(outSize, outSize),
-      cv.Point(0, outSize),
-    ]);
-    transformM = cv.getPerspectiveTransform(srcPoints, dstPoints);
-    birdsEye = cv.warpPerspective(frame, transformM, (outSize, outSize));
-
-    // 3) 交叉点：等分棋盘得到 19×19 网格，不依赖颜色
-    warpedHsv = cv.cvtColor(birdsEye, cv.COLOR_BGR2HSV);
-    // 棋子分类尽量保留局部细节，避免把“最后一手标记圈”抹开
-    warpedBlur = cv.blur(warpedHsv, (5, 5));
-
-    const int borderPx = 26;
-    final int innerH = outSize - 2 * borderPx;
-    final int innerW = outSize - 2 * borderPx;
-    final double stepY = boardSize > 1 ? innerH / (boardSize - 1) : 0;
-    final double stepX = boardSize > 1 ? innerW / (boardSize - 1) : 0;
-    final double spacing = stepX < stepY ? stepX : stepY;
-    int ringOuterR = (spacing * 0.33).round();
-    if (ringOuterR < 3) ringOuterR = 3;
-    if (ringOuterR > 10) ringOuterR = 10;
-    int ringInnerR = (ringOuterR * 0.42).round();
-    if (ringInnerR < 1) ringInnerR = 1;
-    if (ringInnerR >= ringOuterR) ringInnerR = ringOuterR - 1;
-
-    final List<List<GoStone?>> board = List.generate(
-      boardSize,
-      (_) => List.filled(boardSize, null as GoStone?),
-    );
-    int blackCount = 0;
-    int whiteCount = 0;
-
-    // 4) 棋子检测：在每个交叉点局部采样，亮度/HSV 判黑白空
-    for (int y = 0; y < boardSize; y++) {
-      for (int x = 0; x < boardSize; x++) {
-        final int py = (y * stepY).round() + borderPx;
-        final int px = (x * stepX).round() + borderPx;
-        if (py < 0 || py >= warpedBlur.rows || px < 0 || px >= warpedBlur.cols) {
-          continue;
-        }
-        final _StoneSampleStats stats = _sampleRingHsv(
-          warpedHsv,
-          px,
-          py,
-          ringInnerR,
-          ringOuterR,
-        );
-        if (stats.count < 6) {
-          continue;
-        }
-        final List<num> center = warpedHsv.atPixel(py, px);
-        final double centerS = center.length >= 2 ? center[1].toDouble() : 0;
-        final double centerV = center.length >= 3 ? center[2].toDouble() : 0;
-
-        // 环带评分：以外围主色为准，中心只用于“标记圈/点”纠偏
-        double blackScore =
-            stats.darkRatio * 1.15 +
-            stats.veryDarkRatio * 1.55 +
-            ((120 - stats.meanV) / 120).clamp(0.0, 1.0) * 0.75;
-        double whiteScore =
-            stats.brightNeutralRatio * 1.35 +
-            ((stats.meanV - 155) / 100).clamp(0.0, 1.0) * 0.70 +
-            ((95 - stats.meanS) / 95).clamp(0.0, 1.0) * 0.35;
-
-        // 黑子中心白圈（最后一手标记）: 外圈偏黑 + 中心偏亮低饱和
-        if (stats.darkRatio > 0.42 && centerV > 165 && centerS < 90) {
-          blackScore += 0.55;
-        }
-        // 白子中心黑点（最后一手标记）: 外圈偏白 + 中心偏暗
-        if (stats.brightNeutralRatio > 0.42 && centerV < 95) {
-          whiteScore += 0.55;
-        }
-
-        final bool isBlack = blackScore >= 0.95 && blackScore > whiteScore + 0.12;
-        final bool isWhite = whiteScore >= 0.95 && whiteScore > blackScore + 0.12;
-        if (isBlack) {
-          board[y][x] = GoStone.black;
-          blackCount++;
-        } else if (isWhite) {
-          board[y][x] = GoStone.white;
-          whiteCount++;
-        }
-      }
-    }
-
-    return RecognizedBoard(
-      boardSize: boardSize,
-      board: board,
-      blackCount: blackCount,
-      whiteCount: whiteCount,
-      corners: ordered
-          .map((cv.Point p) => GoPointF(p.x.toDouble(), p.y.toDouble()))
-          .toList(),
-    );
-  } catch (_) {
-    return null;
-  } finally {
-    frame?.dispose();
-    gray?.dispose();
-    blurred?.dispose();
-    canny?.dispose();
-    birdsEye?.dispose();
-    warpedHsv?.dispose();
-    warpedBlur?.dispose();
-    transformM?.dispose();
-  }
-}
-
-class _StoneSampleStats {
-  const _StoneSampleStats({
-    required this.count,
-    required this.meanS,
-    required this.meanV,
-    required this.darkRatio,
-    required this.veryDarkRatio,
-    required this.brightNeutralRatio,
-  });
-
-  final int count;
-  final double meanS;
-  final double meanV;
-  final double darkRatio;
-  final double veryDarkRatio;
-  final double brightNeutralRatio;
-}
-
-_StoneSampleStats _sampleRingHsv(
-  cv.Mat hsv,
-  int cx,
-  int cy,
-  int innerR,
-  int outerR,
-) {
-  final int h = hsv.rows;
-  final int w = hsv.cols;
-  final int inner2 = innerR * innerR;
-  final int outer2 = outerR * outerR;
-
-  int count = 0;
-  double sumS = 0;
-  double sumV = 0;
-  int dark = 0;
-  int veryDark = 0;
-  int brightNeutral = 0;
-
-  for (int dy = -outerR; dy <= outerR; dy++) {
-    for (int dx = -outerR; dx <= outerR; dx++) {
-      final int d2 = dx * dx + dy * dy;
-      if (d2 < inner2 || d2 > outer2) continue;
-      final int px = cx + dx;
-      final int py = cy + dy;
-      if (px < 0 || px >= w || py < 0 || py >= h) continue;
-      final List<num> pixel = hsv.atPixel(py, px);
-      if (pixel.length < 3) continue;
-      final double s = pixel[1].toDouble();
-      final double v = pixel[2].toDouble();
-      count++;
-      sumS += s;
-      sumV += v;
-      if (v < 85) dark++;
-      if (v < 65) veryDark++;
-      if (v > 175 && s < 80) brightNeutral++;
+  final int imgArea = smallW * smallH;
+  double bestScore = -1;
+  int bestIdx = -1;
+  for (int i = 0; i < contours.length; i++) {
+    final double area = cv.contourArea(contours[i]);
+    if (area < imgArea * 0.15) continue;
+    final cv.RotatedRect rect = cv.minAreaRect(contours[i]);
+    final double w = rect.size.width;
+    final double h = rect.size.height;
+    final double aspect = w > h ? h / w : w / h;
+    final double score = aspect * math.sqrt(area / imgArea);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
     }
   }
+  if (bestIdx < 0) return null;
 
-  if (count == 0) {
-    return const _StoneSampleStats(
-      count: 0,
-      meanS: 0,
-      meanV: 0,
-      darkRatio: 0,
-      veryDarkRatio: 0,
-      brightNeutralRatio: 0,
-    );
+  final double peri = cv.arcLength(contours[bestIdx], true);
+  for (final double factor in <double>[0.02, 0.03, 0.05, 0.08]) {
+    final cv.VecPoint approx = cv.approxPolyDP(contours[bestIdx], peri * factor, true);
+    if (approx.length == 4) {
+      final List<cv.Point> list = approx.toList();
+      approx.dispose();
+      return list.map((cv.Point p) => cv.Point((p.x / scale).round(), (p.y / scale).round())).toList();
+    }
+    approx.dispose();
   }
 
-  return _StoneSampleStats(
-    count: count,
-    meanS: sumS / count,
-    meanV: sumV / count,
-    darkRatio: dark / count,
-    veryDarkRatio: veryDark / count,
-    brightNeutralRatio: brightNeutral / count,
-  );
+  final cv.RotatedRect minRect = cv.minAreaRect(contours[bestIdx]);
+  final cv.VecPoint2f boxPts = cv.boxPoints(minRect);
+  final List<cv.Point2f> pts = boxPts.toList();
+  boxPts.dispose();
+  return pts.map((cv.Point2f p) => cv.Point((p.x / scale).round(), (p.y / scale).round())).toList();
 }
 
-class _QuadMetrics {
-  const _QuadMetrics({
-    required this.area,
-    required this.minX,
-    required this.maxX,
-    required this.minY,
-    required this.maxY,
-    required this.aspect,
-  });
-
-  final double area;
-  final int minX;
-  final int maxX;
-  final int minY;
-  final int maxY;
-  final double aspect;
-}
-
-_QuadMetrics _quadMetrics(List<cv.Point> pts) {
-  if (pts.length != 4) {
-    return const _QuadMetrics(
-      area: 0,
-      minX: 0,
-      maxX: 0,
-      minY: 0,
-      maxY: 0,
-      aspect: 0,
-    );
-  }
-  final List<int> xs = pts.map((cv.Point p) => p.x).toList();
-  final List<int> ys = pts.map((cv.Point p) => p.y).toList();
-  final int minX = xs.reduce((int a, int b) => a < b ? a : b);
-  final int maxX = xs.reduce((int a, int b) => a > b ? a : b);
-  final int minY = ys.reduce((int a, int b) => a < b ? a : b);
-  final int maxY = ys.reduce((int a, int b) => a > b ? a : b);
-  final double w = (maxX - minX).toDouble().abs();
-  final double h = (maxY - minY).toDouble().abs();
-  final double aspect = h <= 1e-6 ? 0 : (w / h);
-  // Shoelace 多边形面积
-  double area2 = 0;
-  for (int i = 0; i < 4; i++) {
-    final cv.Point a = pts[i];
-    final cv.Point b = pts[(i + 1) % 4];
-    area2 += (a.x * b.y - b.x * a.y);
-  }
-  final double area = area2.abs() * 0.5;
-  return _QuadMetrics(
-    area: area,
-    minX: minX,
-    maxX: maxX,
-    minY: minY,
-    maxY: maxY,
-    aspect: aspect,
-  );
-}
-
-/// 四角点顺序：左上、右上、右下、左下，用于透视目标 (0,0),(W,0),(W,H),(0,H)。
-List<cv.Point> _orderFourPoints(cv.VecPoint pts) {
-  final List<cv.Point> list = pts.toList();
-  if (list.length != 4) return list;
-  list.sort((cv.Point a, cv.Point b) {
-    if (a.y != b.y) return a.y.compareTo(b.y);
-    return a.x.compareTo(b.x);
-  });
-  final cv.Point topLeft = list[0].x < list[1].x ? list[0] : list[1];
-  final cv.Point topRight = list[0].x < list[1].x ? list[1] : list[0];
-  final cv.Point bottomLeft = list[2].x < list[3].x ? list[2] : list[3];
-  final cv.Point bottomRight = list[2].x < list[3].x ? list[3] : list[2];
-  return [topLeft, topRight, bottomRight, bottomLeft];
+cv.VecPoint _orderQuadPoints(List<cv.Point> pts) {
+  final List<cv.Point> list = List<cv.Point>.from(pts);
+  list.sort((cv.Point a, cv.Point b) => (a.y + a.x).compareTo(b.y + b.x));
+  final cv.Point tl = list[0];
+  final cv.Point br = list[3];
+  final List<cv.Point> mid = list.sublist(1, 3);
+  mid.sort((cv.Point a, cv.Point b) => (a.x - a.y).compareTo(b.x - b.y));
+  final cv.Point bl = mid[0];
+  final cv.Point tr = mid[1];
+  return cv.VecPoint.fromList(<cv.Point>[
+    cv.Point(tl.x, tl.y),
+    cv.Point(tr.x, tr.y),
+    cv.Point(br.x, br.y),
+    cv.Point(bl.x, bl.y),
+  ]);
 }
 
 class RecognizedBoard {

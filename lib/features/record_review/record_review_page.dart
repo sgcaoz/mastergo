@@ -971,6 +971,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     final RulePreset preset = rulePresetFromString(_ruleset);
     final double komi =
         double.tryParse(_komiController.text) ?? preset.defaultKomi;
+    final StoneColor gameStartingPlayer = _sgf!.initialBlackStones.isNotEmpty
+        ? StoneColor.white
+        : StoneColor.black;
     final AnalysisProfile ownershipProfile = AnalysisProfile(
       id: '${_analysisProfile.id}-ownership-fast',
       name: _analysisProfile.name,
@@ -986,9 +989,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         initialStones: initialStones,
         gameSetup: GameSetup(
           boardSize: _sgf!.boardSize,
-          startingPlayer: state.toPlay == GoStone.black
-              ? StoneColor.black
-              : StoneColor.white,
+          startingPlayer: gameStartingPlayer,
         ),
         rules: preset.toGameRules(komi: komi),
         profile: ownershipProfile,
@@ -1008,15 +1009,16 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     final RulePreset preset = rulePresetFromString(_ruleset);
     final double komi =
         double.tryParse(_komiController.text) ?? preset.defaultKomi;
+    final StoneColor gameStartingPlayer = _sgf!.initialBlackStones.isNotEmpty
+        ? StoneColor.white
+        : StoneColor.black;
     final KatagoAnalyzeResult analyzed = await _katagoAdapter.analyze(
       KatagoAnalyzeRequest(
         queryId: 'review-hint-${DateTime.now().millisecondsSinceEpoch}',
         moves: moveTokens,
         gameSetup: GameSetup(
           boardSize: _sgf!.boardSize,
-          startingPlayer: state.toPlay == GoStone.black
-              ? StoneColor.black
-              : StoneColor.white,
+          startingPlayer: gameStartingPlayer,
         ),
         rules: preset.toGameRules(komi: komi),
         profile: _isThirdPartyRecord ? _thirdPartyAnalysisProfile : _analysisProfile,

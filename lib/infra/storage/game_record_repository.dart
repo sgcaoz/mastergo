@@ -28,7 +28,7 @@ class GameRecordRepository {
     }
     _db = await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (Database db, int version) async {
         await db.execute('''
           CREATE TABLE $_table(
@@ -76,6 +76,36 @@ class GameRecordRepository {
             ''');
             await db.execute(
               'CREATE INDEX idx_records_source_updated ON $_table(source, updatedAtMs DESC)',
+            );
+          }
+        }
+        if (oldVersion < 2 && newVersion >= 2) {
+          // 修正历史 seed 中少量名局的规则/贴目硬编码错误，避免分析偏差。
+          const List<(String, String, double)> fixes = <(String, String, double)>[
+            ('master-alphago_master_kejie_2017', 'chinese', 6.5),
+            ('master-alphago_master_guli_2017', 'chinese', 6.5),
+            ('master-alphago_master_park_2017', 'chinese', 6.5),
+            ('master-alphago_master_nieweiping_2017', 'chinese', 6.5),
+            ('master-alphago_master_iyama_2017', 'chinese', 6.5),
+            ('master-alphago_master_miyuting_2017', 'chinese', 6.5),
+            ('master-alphago_master_changhao_2017', 'chinese', 6.5),
+            ('master-samsung10_luo_choi_g3', 'chinese', 6.5),
+            ('master-samsung10_luo_lee_g1', 'chinese', 6.5),
+            ('master-samsung10_luo_lee_g2', 'chinese', 6.5),
+            ('master-samsung10_luo_lee_g3', 'chinese', 6.5),
+            ('master-nie_xiaolin_tengen_1985', 'japanese', 5.5),
+            ('master-nie_jiato_tengen_1985', 'japanese', 5.5),
+            ('master-nie_fujisawa_tengen_1985', 'chinese', 5.5),
+          ];
+          for (final (String id, String ruleset, double komi) in fixes) {
+            await db.update(
+              _table,
+              <String, Object?>{
+                'ruleset': ruleset,
+                'komi': komi,
+              },
+              where: 'id = ? AND source = ?',
+              whereArgs: <Object?>[id, 'master'],
             );
           }
         }

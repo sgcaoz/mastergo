@@ -1,18 +1,16 @@
 import 'dart:async';
 import 'dart:typed_data';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mastergo/domain/entities/analysis_profile.dart';
 import 'package:mastergo/domain/entities/game_setup.dart';
 import 'package:mastergo/domain/entities/rule_presets.dart';
 import 'package:mastergo/domain/go/go_types.dart';
 import 'package:mastergo/features/common/go_board_widget.dart';
+import 'package:mastergo/features/photo_judge/board_corner_editor.dart';
 import 'package:mastergo/features/photo_judge/go_board_recognizer_opencv.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
-import 'package:mastergo/infra/storage/game_record_repository.dart';
 
 class PhotoJudgePage extends StatefulWidget {
   const PhotoJudgePage({super.key});
@@ -24,10 +22,6 @@ class PhotoJudgePage extends StatefulWidget {
 class _PhotoJudgePageState extends State<PhotoJudgePage> {
   final ImagePicker _picker = ImagePicker();
   final KatagoAdapter _adapter = PlatformKatagoAdapter();
-  final GameRecordRepository _recordRepository = GameRecordRepository();
-  final TextRecognizer _textRecognizer = TextRecognizer(
-    script: TextRecognitionScript.latin,
-  );
   static const AnalysisProfile _analysisProfile = AnalysisProfile(
     id: 'photo-judge',
     name: '拍照判断',
@@ -41,7 +35,10 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
 
   XFile? _photo;
   Uint8List? _photoBytes;
+  Uint8List? _preparedPhotoBytes;
+  List<Offset>? _calibratedCorners;
   RecognizedBoard? _recognized;
+  BoardRecognitionStrategy _strategy = BoardRecognitionStrategy.noClahe;
   String _ruleset = 'chinese';
   GoStone _toPlay = GoStone.black;
   bool _loading = false;
@@ -53,7 +50,6 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
   @override
   void dispose() {
     unawaited(_adapter.shutdown());
-    _textRecognizer.close();
     super.dispose();
   }
 
@@ -67,12 +63,14 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
       _photo = x;
       _photoBytes = bytes;
       _recognized = null;
+      _preparedPhotoBytes = null;
+      _calibratedCorners = null;
       _hintPoints = <GoPoint>[];
       _hintSummary = null;
       _judgeText = null;
-      _status = '已拍照，正在识别棋盘...';
+      _status = '已拍照，正在校准棋盘...';
     });
-    await _recognizeBoard();
+    await _calibrateAndRecognize();
   }
 
   Future<void> _pickFromGallery() async {
@@ -85,37 +83,78 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
       _photo = x;
       _photoBytes = bytes;
       _recognized = null;
+      _preparedPhotoBytes = null;
+      _calibratedCorners = null;
       _hintPoints = <GoPoint>[];
       _hintSummary = null;
       _judgeText = null;
-      _status = '已选择图片，正在识别棋盘...';
+      _status = '已选择图片，正在校准棋盘...';
     });
-    await _recognizeBoard();
+    await _calibrateAndRecognize();
   }
 
-  Future<void> _recognizeBoard() async {
+  Future<void> _calibrateAndRecognize() async {
     final Uint8List? bytes = _photoBytes ?? (_photo != null ? await _photo!.readAsBytes() : null);
-    if (bytes == null) {
+    if (bytes == null) return;
+    final (Uint8List, int, int)? prepared = prepareImageBytes(bytes);
+    if (prepared == null) {
+      setState(() {
+        _recognized = null;
+        _status = '图片解码失败，请重试';
+      });
       return;
     }
-    if (_photo != null && _photoBytes == null) {
-      setState(() => _photoBytes = bytes);
-    }
+    final Uint8List preparedBytes = prepared.$1;
+    final int imgW = prepared.$2;
+    final int imgH = prepared.$3;
+    final List<Offset> initialCorners = detectBoardCorners(preparedBytes) ?? defaultBoardCorners(imgW, imgH);
+    if (!mounted) return;
+
+    final List<Offset>? pickedCorners = await Navigator.of(context).push<List<Offset>>(
+      MaterialPageRoute<List<Offset>>(
+        builder: (BuildContext context) => BoardCornerEditorPage(
+          imageBytes: preparedBytes,
+          imageWidth: imgW,
+          imageHeight: imgH,
+          initialCorners: initialCorners,
+        ),
+      ),
+    );
+    if (!mounted || pickedCorners == null) return;
+
     setState(() {
+      _preparedPhotoBytes = preparedBytes;
+      _calibratedCorners = pickedCorners;
+      _status = '校准完成，正在识别棋子...';
       _loading = true;
     });
+    await _recognizeWithCurrentStrategy();
+  }
+
+  Future<void> _recognizeWithCurrentStrategy() async {
+    final Uint8List? preparedBytes = _preparedPhotoBytes;
+    final List<Offset>? corners = _calibratedCorners;
+    if (preparedBytes == null || corners == null || corners.length != 4) return;
+    setState(() {
+      _loading = true;
+      _clearAnalysisResult();
+    });
     try {
-      final RecognizedBoard? board = recognizeGoBoardFromBytesAutoSize(bytes);
+      final RecognizedBoard? board = recognizeGoBoardWithCorners(
+        preparedBytes,
+        corners,
+        strategy: _strategy,
+      );
       if (board == null) {
         setState(() {
           _recognized = null;
-          _status = '未能检测到棋盘，请确保画面包含完整棋盘并重试';
+          _status = '识别失败，请调整四角或切换策略重试';
         });
         return;
       }
       setState(() {
         _recognized = board;
-        _status = '识别完成：黑${board.blackCount}，白${board.whiteCount}';
+        _status = '识别完成（${_strategy.label}）：黑${board.blackCount}，白${board.whiteCount}';
       });
     } catch (e) {
       setState(() {
@@ -203,7 +242,8 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
         _judgeText = likelyEndgame
             ? '终局判断：黑子${r.blackCount}，白子${r.whiteCount}；$winner，$lead'
             : '中盘判断：$winner，$lead；当前执棋方胜率${(toPlayWin * 100).toStringAsFixed(1)}%';
-        _status = '分析完成';
+        final String byPlayer = _toPlay == GoStone.black ? '轮到黑' : '轮到白';
+        _status = '分析完成（按$byPlayer计算）';
       });
     } catch (e) {
       setState(() {
@@ -216,151 +256,6 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
         });
       }
     }
-  }
-
-  Future<void> _ocrSequenceAndImport() async {
-    final RecognizedBoard? r = _recognized;
-    final XFile? photo = _photo;
-    if (r == null || photo == null) return;
-    if (r.corners.length != 4) {
-      setState(() {
-        _status = 'OCR失败：棋盘角点不足，无法映射手顺';
-      });
-      return;
-    }
-    setState(() {
-      _loading = true;
-      _status = '正在识别手顺数字...';
-    });
-    try {
-      final InputImage inputImage = InputImage.fromFilePath(photo.path);
-      final RecognizedText text = await _textRecognizer.processImage(inputImage);
-      final List<_NumberedMove> numberedMoves = <_NumberedMove>[];
-      final Set<String> seenNumPoint = <String>{};
-      final _Homography? homography = _buildImageToBoardHomography(
-        r.corners,
-      );
-      if (homography == null) {
-        setState(() {
-          _status = 'OCR失败：角点映射计算失败';
-        });
-        return;
-      }
-      for (final TextBlock block in text.blocks) {
-        for (final TextLine line in block.lines) {
-          for (final TextElement e in line.elements) {
-            final String digits = e.text.replaceAll(RegExp(r'[^0-9]'), '');
-            if (digits.isEmpty) continue;
-            final int? n = int.tryParse(digits);
-            if (n == null || n <= 0 || n > 500) continue;
-            final Rect box = e.boundingBox;
-            final Offset center = Offset(
-              (box.left + box.right) * 0.5,
-              (box.top + box.bottom) * 0.5,
-            );
-            final Offset? uv = homography.mapPoint(center);
-            if (uv == null) continue;
-            final double gx = uv.dx * (r.boardSize - 1);
-            final double gy = uv.dy * (r.boardSize - 1);
-            final int x = gx.round();
-            final int y = gy.round();
-            if (x < 0 || x >= r.boardSize || y < 0 || y >= r.boardSize) {
-              continue;
-            }
-            final double dist = math.sqrt((gx - x) * (gx - x) + (gy - y) * (gy - y));
-            if (dist > 0.42) {
-              continue;
-            }
-            final String key = '$n:$x:$y';
-            if (!seenNumPoint.add(key)) continue;
-            numberedMoves.add(
-              _NumberedMove(number: n, point: GoPoint(x, y)),
-            );
-          }
-        }
-      }
-      if (numberedMoves.isEmpty) {
-        setState(() {
-          _status = '未识别到手顺数字';
-        });
-        return;
-      }
-      numberedMoves.sort((_NumberedMove a, _NumberedMove b) => a.number.compareTo(b.number));
-      final Set<int> seenNum = <int>{};
-      final List<_NumberedMove> uniqByNum = <_NumberedMove>[];
-      for (final _NumberedMove m in numberedMoves) {
-        if (seenNum.add(m.number)) uniqByNum.add(m);
-      }
-
-      int conflictCount = 0;
-      final List<GoMove> moves = <GoMove>[];
-      for (final _NumberedMove m in uniqByNum) {
-        GoStone expected = (m.number % 2 == 1) ? GoStone.black : GoStone.white;
-        final GoStone? detected = r.board[m.point.y][m.point.x];
-        if (detected != null && detected != expected) {
-          expected = detected;
-          conflictCount++;
-        }
-        moves.add(GoMove(player: expected, point: m.point));
-      }
-      final String sgf = _buildSgfFromMoves(
-        boardSize: r.boardSize,
-        ruleset: _ruleset,
-        komi: rulePresetFromString(_ruleset).defaultKomi,
-        moves: moves,
-      );
-      final int now = DateTime.now().millisecondsSinceEpoch;
-      final String title = '拍照OCR手顺-$now';
-      await _recordRepository.saveOrUpdateSourceRecord(
-        source: 'download',
-        title: title,
-        boardSize: r.boardSize,
-        ruleset: _ruleset,
-        komi: rulePresetFromString(_ruleset).defaultKomi,
-        sgf: sgf,
-      );
-      setState(() {
-        _status = 'OCR完成：识别手顺${uniqByNum.length}手，冲突修正$conflictCount处，已加入下载棋谱列表';
-      });
-    } catch (e) {
-      setState(() {
-        _status = '手顺OCR失败: $e';
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-        });
-      }
-    }
-  }
-
-  String _buildSgfFromMoves({
-    required int boardSize,
-    required String ruleset,
-    required double komi,
-    required List<GoMove> moves,
-  }) {
-    final StringBuffer sb = StringBuffer();
-    sb.write('(;GM[1]FF[4]');
-    sb.write('SZ[$boardSize]');
-    sb.write('KM[$komi]');
-    sb.write('RU[$ruleset]');
-    sb.write('PB[Black]');
-    sb.write('PW[White]');
-    for (final GoMove m in moves) {
-      final String c = m.player == GoStone.black ? 'B' : 'W';
-      final GoPoint? p = m.point;
-      if (p == null) continue;
-      sb.write(';$c[${_toSgfCoord(p)}]');
-    }
-    sb.write(')');
-    return sb.toString();
-  }
-
-  String _toSgfCoord(GoPoint p) {
-    const String letters = 'abcdefghijklmnopqrstuvwxyz';
-    return '${letters[p.x]}${letters[p.y]}';
   }
 
   /// 规则或先后手变更后清除上次分析结果，避免界面显示与当前选择不一致。
@@ -478,6 +373,32 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
             ],
           ),
           const SizedBox(height: 8),
+          DropdownButtonFormField<BoardRecognitionStrategy>(
+            initialValue: _strategy,
+            items: BoardRecognitionStrategy.values
+                .map(
+                  (BoardRecognitionStrategy s) => DropdownMenuItem<BoardRecognitionStrategy>(
+                    value: s,
+                    child: Text(s.label),
+                  ),
+                )
+                .toList(),
+            onChanged: _loading
+                ? null
+                : (BoardRecognitionStrategy? s) {
+                    if (s == null || s == _strategy) return;
+                    setState(() => _strategy = s);
+                    if (_preparedPhotoBytes != null && _calibratedCorners != null) {
+                      unawaited(_recognizeWithCurrentStrategy());
+                    }
+                  },
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              labelText: '识别策略',
+            ),
+            isExpanded: true,
+          ),
+          const SizedBox(height: 8),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -496,11 +417,6 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
                 onPressed: (r == null || _loading) ? null : _analyzePosition,
                 icon: const Icon(Icons.analytics_outlined),
                 label: const Text('分析局面'),
-              ),
-              OutlinedButton.icon(
-                onPressed: (r == null || _loading) ? null : _ocrSequenceAndImport,
-                icon: const Icon(Icons.text_snippet_outlined),
-                label: const Text('手顺OCR入库'),
               ),
             ],
           ),
@@ -560,124 +476,4 @@ class _HintItem {
   final GoPoint point;
   final String move;
   final double playerWin;
-}
-
-class _NumberedMove {
-  const _NumberedMove({required this.number, required this.point});
-  final int number;
-  final GoPoint point;
-}
-
-class _Homography {
-  const _Homography(this.a, this.b, this.c, this.d, this.e, this.f, this.g, this.h);
-  final double a;
-  final double b;
-  final double c;
-  final double d;
-  final double e;
-  final double f;
-  final double g;
-  final double h;
-
-  Offset? mapPoint(Offset p) {
-    final double den = g * p.dx + h * p.dy + 1.0;
-    if (den.abs() < 1e-9) return null;
-    final double u = (a * p.dx + b * p.dy + c) / den;
-    final double v = (d * p.dx + e * p.dy + f) / den;
-    if (u.isNaN || v.isNaN) return null;
-    return Offset(u, v);
-  }
-}
-
-_Homography? _buildImageToBoardHomography(List<GoPointF> corners) {
-  if (corners.length != 4) return null;
-  final List<Offset> src = <Offset>[
-    Offset(corners[0].x, corners[0].y), // tl
-    Offset(corners[1].x, corners[1].y), // tr
-    Offset(corners[2].x, corners[2].y), // br
-    Offset(corners[3].x, corners[3].y), // bl
-  ];
-  const List<Offset> dst = <Offset>[
-    Offset(0, 0),
-    Offset(1, 0),
-    Offset(1, 1),
-    Offset(0, 1),
-  ];
-
-  final List<List<double>> m = List<List<double>>.generate(
-    8,
-    (_) => List<double>.filled(8, 0),
-  );
-  final List<double> y = List<double>.filled(8, 0);
-  for (int i = 0; i < 4; i++) {
-    final double x = src[i].dx;
-    final double yy = src[i].dy;
-    final double u = dst[i].dx;
-    final double v = dst[i].dy;
-    // a*x + b*y + c - u*g*x - u*h*y = u
-    m[i * 2][0] = x;
-    m[i * 2][1] = yy;
-    m[i * 2][2] = 1;
-    m[i * 2][6] = -u * x;
-    m[i * 2][7] = -u * yy;
-    y[i * 2] = u;
-    // d*x + e*y + f - v*g*x - v*h*y = v
-    m[i * 2 + 1][3] = x;
-    m[i * 2 + 1][4] = yy;
-    m[i * 2 + 1][5] = 1;
-    m[i * 2 + 1][6] = -v * x;
-    m[i * 2 + 1][7] = -v * yy;
-    y[i * 2 + 1] = v;
-  }
-
-  final List<double>? sol = _solveLinearSystem8x8(m, y);
-  if (sol == null) return null;
-  return _Homography(
-    sol[0],
-    sol[1],
-    sol[2],
-    sol[3],
-    sol[4],
-    sol[5],
-    sol[6],
-    sol[7],
-  );
-}
-
-List<double>? _solveLinearSystem8x8(List<List<double>> a, List<double> b) {
-  const int n = 8;
-  final List<List<double>> m = List<List<double>>.generate(
-    n,
-    (int i) => <double>[...a[i], b[i]],
-  );
-  for (int col = 0; col < n; col++) {
-    int pivot = col;
-    double maxAbs = m[col][col].abs();
-    for (int r = col + 1; r < n; r++) {
-      final double v = m[r][col].abs();
-      if (v > maxAbs) {
-        maxAbs = v;
-        pivot = r;
-      }
-    }
-    if (maxAbs < 1e-10) return null;
-    if (pivot != col) {
-      final List<double> tmp = m[col];
-      m[col] = m[pivot];
-      m[pivot] = tmp;
-    }
-    final double div = m[col][col];
-    for (int c = col; c <= n; c++) {
-      m[col][c] /= div;
-    }
-    for (int r = 0; r < n; r++) {
-      if (r == col) continue;
-      final double factor = m[r][col];
-      if (factor.abs() < 1e-12) continue;
-      for (int c = col; c <= n; c++) {
-        m[r][c] -= factor * m[col][c];
-      }
-    }
-  }
-  return List<double>.generate(n, (int i) => m[i][n]);
 }

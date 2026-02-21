@@ -135,10 +135,12 @@ class PlatformKatagoAdapter implements KatagoAdapter {
 
   Future<KatagoAnalyzeResult> _analyzeOnce(KatagoAnalyzeRequest request) async {
     await ensureStarted();
+    final String initialPlayer = request.gameSetup.startingPlayer == StoneColor.black ? 'B' : 'W';
     final Map<dynamic, dynamic>? response = await _channel
         .invokeMapMethod<dynamic, dynamic>('analyzeOnce', <String, Object?>{
           'queryId': request.queryId,
           'boardSize': request.gameSetup.boardSize,
+          'initialPlayer': initialPlayer,
           'ruleset': request.rules.ruleset,
           'komi': request.rules.komi,
           'maxVisits': request.profile.maxVisits,

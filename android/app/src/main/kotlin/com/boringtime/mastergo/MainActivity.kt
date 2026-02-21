@@ -246,6 +246,7 @@ class MainActivity : FlutterActivity() {
             val thinkingTimeMs = call.argument<Int>("thinkingTimeMs") ?: 1200
             val timeoutOverrideMs = call.argument<Int>("timeoutMs")
             val boardSize = call.argument<Int>("boardSize") ?: 19
+            val initialPlayer = call.argument<String>("initialPlayer") ?: "B"
             val komi = call.argument<Double>("komi") ?: 7.5
             val ruleset = call.argument<String>("ruleset") ?: "chinese"
             val moveTokens = call.argument<List<String>>("moves") ?: emptyList()
@@ -258,6 +259,7 @@ class MainActivity : FlutterActivity() {
                 put("komi", komi)
                 put("boardXSize", boardSize)
                 put("boardYSize", boardSize)
+                put("initialPlayer", initialPlayer)
                 put("maxVisits", maxVisits)
                 put("moves", parseTokenArray(moveTokens))
                 put("initialStones", parseTokenArray(initialStones))

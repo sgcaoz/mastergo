@@ -44,7 +44,6 @@ dependencies:
   image_picker: ^1.2.1
   image: ^4.7.2
   opencv_dart: ^2.2.1
-  google_mlkit_text_recognition: ^0.15.1
 
 dev_dependencies:
   flutter_test:

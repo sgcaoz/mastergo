@@ -1,4 +1,4 @@
-// 在开发机本地跑名局每步胜率（maxVisits=10），规则以 SGF 为准。
+// 在开发机本地跑名局每步胜率（全局低 visits + 终局段高 visits 覆盖），规则以 SGF 为准。
 // 每步追加一条日志到 tool/master_winrate_temp/batch.log；每局跑完生成 tool/master_winrate_temp/{gameId}.json；全部跑完再更新 seed DB。
 // 运行：dart run tool/run_master_winrate_batch.dart
 // 后台跑：nohup dart run tool/run_master_winrate_batch.dart >> tool/master_winrate_temp/console.log 2>&1 &
@@ -63,6 +63,14 @@ void main(List<String> args) async {
   print('');
 
   final Database db = sqlite3.open(seedPath);
+  final int baseMaxVisitsRaw =
+      int.tryParse(Platform.environment['MASTER_BASE_VISITS'] ?? '') ?? 10;
+  final int endgameMaxVisitsRaw =
+      int.tryParse(Platform.environment['MASTER_ENDGAME_VISITS'] ?? '') ?? 200;
+  final int baseMaxVisits = baseMaxVisitsRaw < 1 ? 10 : baseMaxVisitsRaw;
+  final int endgameMaxVisits =
+      endgameMaxVisitsRaw < baseMaxVisits ? baseMaxVisits : endgameMaxVisitsRaw;
+  print('参数: baseMaxVisits=$baseMaxVisits, endgameMaxVisits=$endgameMaxVisits');
   final List<Map<String, dynamic>> rows = db.select(
     'SELECT id, sgf, ruleset, komi FROM game_records WHERE source = ?',
     ['master'],
@@ -168,6 +176,97 @@ wideRootNoise = 0.0
     return null;
   }
 
+  int endgameWindowSize(int numTurns) {
+    if (numTurns <= 0) return 0;
+    final int adaptive = (numTurns / 6).round();
+    if (adaptive < 24) return numTurns < 24 ? numTurns : 24;
+    if (adaptive > 60) return 60;
+    return adaptive;
+  }
+
+  Future<void> runQuery({
+    required String id,
+    required SgfGame sgf,
+    required String rules,
+    required double komi,
+    required List<List<String>> kataGoMoves,
+    required List<List<String>> initialStones,
+    required List<int> analyzeTurns,
+    required int maxVisits,
+    required String logTag,
+    required bool updateProgress,
+    required Map<String, double> gameWinrates,
+  }) async {
+    if (analyzeTurns.isEmpty) return;
+    final String queryId =
+        'q-$id-$logTag-${DateTime.now().millisecondsSinceEpoch}';
+    final Map<String, dynamic> query = <String, dynamic>{
+      'id': queryId,
+      'boardXSize': sgf.boardSize,
+      'boardYSize': sgf.boardSize,
+      'rules': rules,
+      'komi': komi,
+      'maxVisits': maxVisits,
+      'moves': kataGoMoves,
+      'initialStones': initialStones,
+      'analyzeTurns': analyzeTurns,
+    };
+    stdin.writeln(jsonEncode(query));
+    await stdin.flush();
+
+    final Set<int> receivedTurns = {};
+    while (receivedTurns.length < analyzeTurns.length) {
+      final String? resp =
+          await readOneResponse(queryId, const Duration(seconds: 120));
+      if (resp == null) {
+        appendLog(
+          'TIMEOUT $id $logTag ${receivedTurns.length}/${analyzeTurns.length}',
+        );
+        print(
+          'Timeout waiting for KataGo response $id[$logTag] '
+          '(got ${receivedTurns.length}/${analyzeTurns.length})',
+        );
+        if (updateProgress) {
+          currentTurn = analyzeTurns.isNotEmpty
+              ? analyzeTurns[receivedTurns.length]
+              : 0;
+          _saveProgress(progressPath, completedIds, currentId, currentTurn, results);
+        }
+        db.dispose();
+        process.kill();
+        exit(1);
+      }
+      final Map<String, dynamic> obj = jsonDecode(resp) as Map<String, dynamic>;
+      final int turnNum = (obj['turnNumber'] as num?)?.toInt() ?? 0;
+      final Map<String, dynamic>? rootInfo =
+          obj['rootInfo'] as Map<String, dynamic>?;
+      final double wr = (rootInfo?['winrate'] as num?)?.toDouble() ?? 0.5;
+      if (!receivedTurns.contains(turnNum)) {
+        receivedTurns.add(turnNum);
+        gameWinrates['$turnNum'] = wr;
+        results[id] = gameWinrates;
+        final String logLine =
+            '${DateTime.now().toIso8601String()}  $id  [$logTag] 第${turnNum}步  胜率 ${(wr * 100).toStringAsFixed(1)}%';
+        appendLog(logLine);
+        if (receivedTurns.length % 20 == 0 ||
+            receivedTurns.length == analyzeTurns.length) {
+          print(
+            '  $id[$logTag] turns ${receivedTurns.length}/${analyzeTurns.length}',
+          );
+          if (updateProgress) {
+            _saveProgress(
+              progressPath,
+              completedIds,
+              currentId,
+              turnNum + 1,
+              results,
+            );
+          }
+        }
+      }
+    }
+  }
+
   String rulesToKataGo(String rules) {
     final String r = rules.trim().toLowerCase();
     if (r.contains('japanese') || r == 'japanese') return 'japanese';
@@ -260,52 +359,45 @@ wideRootNoise = 0.0
       continue;
     }
 
-    final String queryId = 'q-$id-${DateTime.now().millisecondsSinceEpoch}';
-    final Map<String, dynamic> query = <String, dynamic>{
-      'id': queryId,
-      'boardXSize': sgf.boardSize,
-      'boardYSize': sgf.boardSize,
-      'rules': rules,
-      'komi': komi,
-      'maxVisits': 10,
-      'moves': kataGoMoves,
-      'initialStones': initialStones,
-      'analyzeTurns': analyzeTurns,
-    };
-    stdin.writeln(jsonEncode(query));
-    await stdin.flush();
+    await runQuery(
+      id: id,
+      sgf: sgf,
+      rules: rules,
+      komi: komi,
+      kataGoMoves: kataGoMoves,
+      initialStones: initialStones,
+      analyzeTurns: analyzeTurns,
+      maxVisits: baseMaxVisits,
+      logTag: 'base',
+      updateProgress: true,
+      gameWinrates: gameWinrates,
+    );
 
-    final Set<int> receivedTurns = {};
-    while (receivedTurns.length < analyzeTurns.length) {
-      final String? resp =
-          await readOneResponse(queryId, const Duration(seconds: 120));
-      if (resp == null) {
-        appendLog('TIMEOUT $id ${receivedTurns.length}/${analyzeTurns.length}');
-        print('Timeout waiting for KataGo response $id (got ${receivedTurns.length}/${analyzeTurns.length})');
-        currentTurn = analyzeTurns.isNotEmpty ? analyzeTurns[receivedTurns.length] : 0;
-        _saveProgress(progressPath, completedIds, currentId, currentTurn, results);
-        db.dispose();
-        process.kill();
-        exit(1);
-      }
-      final Map<String, dynamic> obj =
-          jsonDecode(resp) as Map<String, dynamic>;
-      final int turnNum = (obj['turnNumber'] as num?)?.toInt() ?? 0;
-      final Map<String, dynamic>? rootInfo =
-          obj['rootInfo'] as Map<String, dynamic>?;
-      final double wr = (rootInfo?['winrate'] as num?)?.toDouble() ?? 0.5;
-      if (!receivedTurns.contains(turnNum)) {
-        receivedTurns.add(turnNum);
-        gameWinrates['$turnNum'] = wr;
-        results[id] = gameWinrates;
-        final String logLine =
-            '${DateTime.now().toIso8601String()}  $id  第${turnNum}步  胜率 ${(wr * 100).toStringAsFixed(1)}%';
-        appendLog(logLine);
-        if (receivedTurns.length % 20 == 0 || receivedTurns.length == analyzeTurns.length) {
-          print('  $id turns ${receivedTurns.length}/${analyzeTurns.length}');
-          _saveProgress(progressPath, completedIds, currentId, turnNum + 1, results);
-        }
-      }
+    final int endgameWindow = endgameWindowSize(numTurns);
+    final int endgameStartTurn =
+        (numTurns - endgameWindow + 1).clamp(0, numTurns).toInt();
+    final List<int> endgameTurns = List<int>.generate(
+      numTurns - endgameStartTurn + 1,
+      (int i) => endgameStartTurn + i,
+    );
+    if (endgameTurns.isNotEmpty && endgameMaxVisits > baseMaxVisits) {
+      appendLog(
+        '${DateTime.now().toIso8601String()}  $id  启动终局高访覆盖 '
+        '(${endgameTurns.first}~${endgameTurns.last}, visits=$endgameMaxVisits)',
+      );
+      await runQuery(
+        id: id,
+        sgf: sgf,
+        rules: rules,
+        komi: komi,
+        kataGoMoves: kataGoMoves,
+        initialStones: initialStones,
+        analyzeTurns: endgameTurns,
+        maxVisits: endgameMaxVisits,
+        logTag: 'endgame',
+        updateProgress: false,
+        gameWinrates: gameWinrates,
+      );
     }
 
     completedIds.add(id);
