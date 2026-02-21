@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Directory, File, FileSystemEntity, Platform;
+import 'dart:io' show Directory, File, Platform;
 
 import 'package:external_path/external_path.dart';
 import 'package:path/path.dart' as p;
@@ -28,10 +28,6 @@ import 'package:mastergo/infra/storage/game_record_repository.dart';
 
 /// 默认打开的目录：下载目录。iOS 用 path_provider；Android 上 getDownloadsDirectory 不可用时用 external_path 取公共 Download 路径。
 Future<String?> getInitialDirectoryForImport() async {
-  try {
-    final Directory? downloads = await getDownloadsDirectory();
-    if (downloads != null) return downloads.path;
-  } catch (_) {}
   if (Platform.isAndroid) {
     try {
       final String path = await ExternalPath.getExternalStoragePublicDirectory(
@@ -40,7 +36,138 @@ Future<String?> getInitialDirectoryForImport() async {
       if (path.isNotEmpty) return path;
     } catch (_) {}
   }
+  try {
+    final Directory? downloads = await getDownloadsDirectory();
+    if (downloads != null) return downloads.path;
+  } catch (_) {}
   return null;
+}
+
+class _PickedSgfFile {
+  const _PickedSgfFile({
+    required this.fileName,
+    required this.content,
+  });
+
+  final String fileName;
+  final String content;
+}
+
+class _BrowseOtherDirsToken {
+  const _BrowseOtherDirsToken();
+}
+
+bool _isSgfName(String name) => name.toLowerCase().endsWith('.sgf');
+
+Future<_PickedSgfFile?> pickSgfWithDownloadPriority(BuildContext context) async {
+  Future<_PickedSgfFile?> pickFromSystem({String? initialDirectory}) async {
+    final FilePickerResult? pick = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      allowMultiple: false,
+      initialDirectory: initialDirectory,
+      withData: true,
+    );
+    if (pick == null || pick.files.isEmpty) {
+      return null;
+    }
+    final PlatformFile file = pick.files.first;
+    final String name = file.name.isNotEmpty ? file.name : 'imported.sgf';
+    if (!_isSgfName(name)) {
+      return null;
+    }
+    final String content;
+    if (file.bytes != null) {
+      content = utf8.decode(file.bytes!, allowMalformed: true);
+    } else if (file.path != null && file.path!.isNotEmpty) {
+      content = await File(file.path!).readAsString();
+    } else {
+      return null;
+    }
+    return _PickedSgfFile(fileName: name, content: content);
+  }
+
+  // Android: 先展示下载目录（最新优先），并提供“浏览其他目录”入口。
+  if (Platform.isAndroid) {
+    final String? downloadDir = await getInitialDirectoryForImport();
+    if (downloadDir != null && downloadDir.isNotEmpty) {
+      final Directory dir = Directory(downloadDir);
+      if (dir.existsSync()) {
+        List<File> sgfFiles = <File>[];
+        try {
+          sgfFiles = dir
+              .listSync()
+              .whereType<File>()
+              .where((File f) => _isSgfName(p.basename(f.path)))
+              .toList()
+            ..sort(
+              (File a, File b) => b
+                  .lastModifiedSync()
+                  .millisecondsSinceEpoch
+                  .compareTo(a.lastModifiedSync().millisecondsSinceEpoch),
+            );
+        } catch (_) {}
+
+        final Object? selection = await showDialog<Object>(
+          context: context,
+          builder: (BuildContext ctx) {
+            return AlertDialog(
+              title: const Text('下载目录（最新优先）'),
+              content: SizedBox(
+                width: 420,
+                child: sgfFiles.isEmpty
+                    ? const Text('下载目录未找到 SGF，可改用“浏览其他目录”')
+                    : ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: sgfFiles.length.clamp(0, 80),
+                        itemBuilder: (BuildContext context, int index) {
+                          final File f = sgfFiles[index];
+                          final String name = p.basename(f.path);
+                          return ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(
+                              name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onTap: () => Navigator.of(ctx).pop(f.path),
+                          );
+                        },
+                      ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () =>
+                      Navigator.of(ctx).pop(const _BrowseOtherDirsToken()),
+                  child: const Text('浏览其他目录'),
+                ),
+              ],
+            );
+          },
+        );
+
+        if (selection is String) {
+          final File f = File(selection);
+          final String name = p.basename(f.path);
+          final String content = await f.readAsString();
+          return _PickedSgfFile(fileName: name, content: content);
+        }
+        if (selection is _BrowseOtherDirsToken) {
+          return pickFromSystem();
+        }
+        return null;
+      }
+    }
+    return pickFromSystem();
+  }
+
+  // 其他平台：仍优先尝试下载目录作为初始目录，但不限制用户切换目录。
+  final String? initialDir = await getInitialDirectoryForImport();
+  return pickFromSystem(initialDirectory: initialDir);
 }
 
 /// 将 SGF 内容写入设备下载目录（与 URL 导入一致，便于在文件管理器中看到）。失败不抛错。
@@ -613,65 +740,15 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
 
   /// 唯一入口：先选文件夹，再在列表中选一个 SGF。优先从下载目录打开以兼容刚下载的文件。
   Future<void> _importSgf() async {
-    final String? initialDir = await getInitialDirectoryForImport();
-    final String? dirPath = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: '选择包含棋谱的文件夹',
-      initialDirectory: initialDir,
-    );
-    if (dirPath == null || dirPath.isEmpty) {
+    final _PickedSgfFile? picked = await pickSgfWithDownloadPriority(context);
+    if (picked == null) {
       return;
     }
-    final Directory dir = Directory(dirPath);
-    if (!dir.existsSync()) {
-      setState(() => _status = '文件夹不存在');
-      return;
-    }
-    List<FileSystemEntity> entities;
     try {
-      entities = dir.listSync();
-    } catch (e) {
-      setState(() => _status = '无法读取文件夹: $e');
-      return;
-    }
-    final List<File> sgfFiles = entities
-        .whereType<File>()
-        .where((File f) => f.path.toLowerCase().endsWith('.sgf'))
-        .toList();
-    if (sgfFiles.isEmpty) {
-      setState(() => _status = '该文件夹内没有 SGF 文件');
-      return;
-    }
-    sgfFiles.sort((File a, File b) => a.path.compareTo(b.path));
-    if (!mounted) {
-      return;
-    }
-    final File? chosen = await showDialog<File>(
-      context: context,
-      builder: (BuildContext ctx) {
-        return SimpleDialog(
-          title: const Text('选择棋谱文件'),
-          children: sgfFiles.map((File f) {
-            final String name = f.path.split(RegExp(r'[/\\]')).last;
-            return SimpleDialogOption(
-              onPressed: () => Navigator.of(ctx).pop(f),
-              child: Text(name, overflow: TextOverflow.ellipsis),
-            );
-          }).toList(),
-        );
-      },
-    );
-    if (chosen == null) {
-      return;
-    }
-    String content;
-    try {
-      content = await chosen.readAsString();
+      await _applyImportedSgf(picked.content, picked.fileName);
     } catch (e) {
       setState(() => _status = '读取失败: $e');
-      return;
     }
-    final String name = chosen.path.split(RegExp(r'[/\\]')).last;
-    await _applyImportedSgf(content, name);
   }
 
   Future<void> _applyImportedSgf(String content, String fileName) async {
@@ -1155,9 +1232,17 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         )
         .map(
           (MoveHint h) =>
-              '第${h.turn}手后黑方胜率 ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
+              '第${h.turn}手后${_blackWinrateLabel()} ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
         )
         .toList();
+  }
+
+  String _blackWinrateLabel() {
+    final String blackName = (_sgf?.blackName ?? '').trim();
+    if (blackName.isEmpty) {
+      return '黑方胜率';
+    }
+    return '黑方（$blackName）胜率';
   }
 
   String _toSgfCoord(GoPoint p) {
@@ -1348,8 +1433,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                       const SizedBox(width: 12),
                       Text(
                         _winrates.containsKey(_currentTurn)
-                            ? '当前胜率: ${(_winrates[_currentTurn]! * 100).toStringAsFixed(1)}%'
-                            : '当前胜率: --',
+                            ? '${_blackWinrateLabel()}: ${(_winrates[_currentTurn]! * 100).toStringAsFixed(1)}%'
+                            : '${_blackWinrateLabel()}: --',
                         style: const TextStyle(fontSize: 13),
                       ),
                     ],
@@ -1485,69 +1570,21 @@ class _ImportSgfPageState extends State<_ImportSgfPage> {
       _status = null;
     });
     try {
-      final String? initialDir = await getInitialDirectoryForImport();
-      final String? dirPath = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: '选择包含棋谱的文件夹',
-        initialDirectory: initialDir,
-      );
-      if (dirPath == null || dirPath.isEmpty) {
+      final _PickedSgfFile? picked = await pickSgfWithDownloadPriority(context);
+      if (picked == null) {
         return;
       }
-      final Directory dir = Directory(dirPath);
-      if (!dir.existsSync()) {
-        setState(() => _status = '文件夹不存在');
-        return;
-      }
-      List<FileSystemEntity> entities;
-      try {
-        entities = dir.listSync();
-      } catch (e) {
-        setState(() => _status = '无法读取文件夹: $e');
-        return;
-      }
-      final List<File> sgfFiles = entities
-          .whereType<File>()
-          .where((File f) => f.path.toLowerCase().endsWith('.sgf'))
-          .toList();
-      if (sgfFiles.isEmpty) {
-        setState(() => _status = '该文件夹内没有 SGF 文件');
-        return;
-      }
-      sgfFiles.sort((File a, File b) => a.path.compareTo(b.path));
       if (!mounted) {
         return;
       }
-      final File? chosen = await showDialog<File>(
-        context: context,
-        builder: (BuildContext ctx) {
-          return SimpleDialog(
-            title: const Text('选择棋谱文件'),
-            children: sgfFiles.map((File f) {
-              final String name = f.path.split(RegExp(r'[/\\]')).last;
-              return SimpleDialogOption(
-                onPressed: () => Navigator.of(ctx).pop(f),
-                child: Text(name, overflow: TextOverflow.ellipsis),
-              );
-            }).toList(),
-          );
-        },
-      );
-      if (chosen == null) {
-        return;
-      }
-      final String content = await chosen.readAsString();
-      final String title = chosen.path.split(RegExp(r'[/\\]')).last;
-      if (!mounted) {
-        return;
-      }
-      final SgfGame parsed = _sgfParser.parse(content);
+      final SgfGame parsed = _sgfParser.parse(picked.content);
       final String ruleset = parsed.rules.isEmpty
           ? 'chinese'
           : rulePresetFromString(parsed.rules).id;
       Navigator.of(context).pop(
         _ImportResult(
-          sgf: content,
-          title: title,
+          sgf: picked.content,
+          title: picked.fileName,
           source: 'download',
           ruleset: ruleset,
           komi: parsed.komi,

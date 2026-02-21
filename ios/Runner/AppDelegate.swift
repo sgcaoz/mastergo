@@ -7,6 +7,7 @@ import Darwin
 @objc class AppDelegate: FlutterAppDelegate {
   private let katagoChannelName = "mastergo/katago"
   private let fileOpenerChannelName = "mastergo/file_opener"
+  private let katagoQueue = DispatchQueue(label: "mastergo.katago.engine")
   private var iosEngineStarted = false
   private var pendingOpenSgfUrl: URL?
   private var katagoPid: pid_t = 0
@@ -25,20 +26,29 @@ import Darwin
       )
       channel.setMethodCallHandler { [weak self] call, result in
         guard let self = self else {
-          result(FlutterError(code: "INTERNAL", message: "AppDelegate deallocated", details: nil))
+          DispatchQueue.main.async {
+            result(FlutterError(code: "INTERNAL", message: "AppDelegate deallocated", details: nil))
+          }
           return
         }
-        switch call.method {
-        case "prepareModel":
-          self.prepareModel(call: call, result: result)
-        case "startEngine":
-          self.startEngine(call: call, result: result)
-        case "analyzeOnce":
-          self.analyzeOnce(call: call, result: result)
-        case "shutdownEngine":
-          self.shutdownEngine(result: result)
-        default:
-          result(FlutterMethodNotImplemented)
+        let safeResult: FlutterResult = { value in
+          DispatchQueue.main.async {
+            result(value)
+          }
+        }
+        self.katagoQueue.async {
+          switch call.method {
+          case "prepareModel":
+            self.prepareModel(call: call, result: safeResult)
+          case "startEngine":
+            self.startEngine(call: call, result: safeResult)
+          case "analyzeOnce":
+            self.analyzeOnce(call: call, result: safeResult)
+          case "shutdownEngine":
+            self.shutdownEngine(result: safeResult)
+          default:
+            safeResult(FlutterMethodNotImplemented)
+          }
         }
       }
     }

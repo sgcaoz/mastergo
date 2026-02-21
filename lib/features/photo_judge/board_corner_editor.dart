@@ -110,28 +110,101 @@ class _ImageWithCornersOverlay extends StatefulWidget {
 }
 
 class _ImageWithCornersOverlayState extends State<_ImageWithCornersOverlay> {
-  static const double _handleTouchRadius = 30;
-  static const double _workPadding = 28;
   static const double _tipsReservedHeight = 78;
-  double _scale = 1.0;
-  double _dispW = 0;
-  double _dispH = 0;
-  double _canvasW = 0;
-  double _canvasH = 0;
+  static const double _targetHandleSizePx = 28;
+  static const double _targetHitRadiusPx = 32;
 
-  void _computeLayout(BoxConstraints constraints, int imgW, int imgH) {
-    if (imgW <= 0 || imgH <= 0) return;
-    final double cw = (constraints.maxWidth - _workPadding * 2).clamp(1, double.infinity);
-    final double ch = (constraints.maxHeight - _workPadding * 2 - _tipsReservedHeight).clamp(1, double.infinity);
-    final double s = (cw / imgW) < (ch / imgH) ? (cw / imgW) : (ch / imgH);
-    _scale = s;
-    _dispW = imgW * s;
-    _dispH = imgH * s;
-    _canvasW = _dispW + _workPadding * 2;
-    _canvasH = _dispH + _workPadding * 2;
+  final TransformationController _transformController =
+      TransformationController();
+  Size? _lastViewportSize;
+  int? _activeCornerIndex;
+  int? _activePointer;
+
+  double get _currentScale =>
+      _transformController.value.getMaxScaleOnAxis().clamp(0.1, 20.0);
+
+  double get _handleSizeInImage => _targetHandleSizePx / _currentScale;
+  double get _hitRadiusInImage => _targetHitRadiusPx / _currentScale;
+
+  @override
+  void initState() {
+    super.initState();
+    _transformController.addListener(_onTransformChanged);
   }
 
-  Offset _imageToDisplay(Offset p) => Offset(_workPadding + p.dx * _scale, _workPadding + p.dy * _scale);
+  void _onTransformChanged() {
+    if (!mounted) return;
+    // 刷新角点可视大小与命中半径，避免缩放后拖动手感变化。
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _transformController.removeListener(_onTransformChanged);
+    _transformController.dispose();
+    super.dispose();
+  }
+
+  void _ensureFitTransform(Size viewport, int imgW, int imgH) {
+    if (imgW <= 0 || imgH <= 0) return;
+    if (_lastViewportSize == viewport) return;
+    _lastViewportSize = viewport;
+    final double fitScale = (viewport.width / imgW) < (viewport.height / imgH)
+        ? (viewport.width / imgW)
+        : (viewport.height / imgH);
+    final double dx = (viewport.width - imgW * fitScale) / 2;
+    final double dy = (viewport.height - imgH * fitScale) / 2;
+    _transformController.value = Matrix4.identity()
+      ..translate(dx, dy)
+      ..scale(fitScale);
+  }
+
+  Offset _toImagePoint(Offset localPoint) =>
+      _transformController.toScene(localPoint);
+
+  int? _hitCorner(Offset imagePoint) {
+    int? index;
+    double best = double.infinity;
+    for (int i = 0; i < widget.corners.length; i++) {
+      final double d = (widget.corners[i] - imagePoint).distance;
+      if (d <= _hitRadiusInImage && d < best) {
+        best = d;
+        index = i;
+      }
+    }
+    return index;
+  }
+
+  void _onPointerDown(PointerDownEvent event, int imgW, int imgH) {
+    if (_activePointer != null) return;
+    final Offset imagePoint = _toImagePoint(event.localPosition);
+    final int? hitIndex = _hitCorner(imagePoint);
+    if (hitIndex == null) return;
+    _activePointer = event.pointer;
+    _activeCornerIndex = hitIndex;
+    widget.onDragStart(hitIndex);
+    setState(() {});
+  }
+
+  void _onPointerMove(PointerMoveEvent event, int imgW, int imgH) {
+    if (_activePointer != event.pointer || _activeCornerIndex == null) return;
+    final Offset imagePoint = _toImagePoint(event.localPosition);
+    final Offset clamped = Offset(
+      imagePoint.dx.clamp(0.0, imgW.toDouble()),
+      imagePoint.dy.clamp(0.0, imgH.toDouble()),
+    );
+    final List<Offset> updated = List<Offset>.from(widget.corners);
+    updated[_activeCornerIndex!] = clamped;
+    widget.onCornersChanged(updated);
+  }
+
+  void _onPointerUpOrCancel(PointerEvent event) {
+    if (_activePointer != event.pointer) return;
+    _activePointer = null;
+    _activeCornerIndex = null;
+    widget.onDragEnd();
+    setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -142,7 +215,10 @@ class _ImageWithCornersOverlayState extends State<_ImageWithCornersOverlay> {
       constraints: const BoxConstraints(maxWidth: 600, maxHeight: 800),
       child: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints constraints) {
-          _computeLayout(constraints, imgW, imgH);
+          final double viewportW = constraints.maxWidth.clamp(1.0, 600.0);
+          final double viewportH =
+              (constraints.maxHeight - _tipsReservedHeight).clamp(1.0, 760.0);
+          _ensureFitTransform(Size(viewportW, viewportH), imgW, imgH);
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
@@ -155,100 +231,108 @@ class _ImageWithCornersOverlayState extends State<_ImageWithCornersOverlay> {
               ),
               const SizedBox(height: 8),
               SizedBox(
-                width: _canvasW,
-                height: _canvasH,
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: <Widget>[
-                    Positioned(
-                      left: _workPadding,
-                      top: _workPadding,
-                      width: _dispW,
-                      height: _dispH,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.memory(
-                          widget.imageBytes,
-                          fit: BoxFit.fill,
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      left: _workPadding,
-                      top: _workPadding,
-                      width: _dispW,
-                      height: _dispH,
-                      child: IgnorePointer(
-                        child: CustomPaint(
-                          painter: _QuadOverlayPainter(
-                            corners: widget.corners
-                                .map((Offset p) {
-                                  final Offset d = _imageToDisplay(p);
-                                  return Offset(d.dx - _workPadding, d.dy - _workPadding);
-                                })
-                                .toList(),
-                            color: Colors.green.withValues(alpha: 0.8),
-                            strokeWidth: 3,
-                          ),
-                        ),
-                      ),
-                    ),
-                    ...List<Widget>.generate(4, (int i) {
-                      final Offset pos = _imageToDisplay(widget.corners[i]);
-                      return Positioned(
-                        left: pos.dx - _handleTouchRadius,
-                        top: pos.dy - _handleTouchRadius,
-                        width: _handleTouchRadius * 2,
-                        height: _handleTouchRadius * 2,
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onPanStart: (_) => widget.onDragStart(i),
-                          onPanUpdate: (DragUpdateDetails d) {
-                            final Offset cur = widget.corners[i];
-                            final Offset newImg = Offset(
-                              (cur.dx + d.delta.dx / _scale).clamp(0.0, imgW.toDouble()),
-                              (cur.dy + d.delta.dy / _scale).clamp(0.0, imgH.toDouble()),
-                            );
-                            final List<Offset> updated = List<Offset>.from(widget.corners);
-                            updated[i] = newImg;
-                            widget.onCornersChanged(updated);
-                          },
-                          onPanEnd: (_) => widget.onDragEnd(),
-                          child: Center(
-                            child: Container(
-                              width: 28,
-                              height: 28,
-                              decoration: BoxDecoration(
-                                color: widget.draggingIndex == i ? Colors.blue : Colors.green,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.white,
-                                  width: 2,
-                                ),
-                                boxShadow: <BoxShadow>[
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.3),
-                                    blurRadius: 4,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ],
+                width: viewportW,
+                height: viewportH,
+                child: Listener(
+                  behavior: HitTestBehavior.translucent,
+                  onPointerDown: (PointerDownEvent e) =>
+                      _onPointerDown(e, imgW, imgH),
+                  onPointerMove: (PointerMoveEvent e) =>
+                      _onPointerMove(e, imgW, imgH),
+                  onPointerUp: _onPointerUpOrCancel,
+                  onPointerCancel: _onPointerUpOrCancel,
+                  child: InteractiveViewer(
+                    transformationController: _transformController,
+                    panEnabled: _activePointer == null,
+                    scaleEnabled: _activePointer == null,
+                    minScale: 0.3,
+                    maxScale: 8.0,
+                    boundaryMargin: const EdgeInsets.all(240),
+                    constrained: false,
+                    child: SizedBox(
+                      width: imgW.toDouble(),
+                      height: imgH.toDouble(),
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: <Widget>[
+                          Positioned.fill(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.memory(
+                                widget.imageBytes,
+                                fit: BoxFit.fill,
                               ),
-                              child: Center(
-                                child: Text(
-                                  '${i + 1}',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
+                            ),
+                          ),
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              child: CustomPaint(
+                                painter: _QuadOverlayPainter(
+                                  corners: widget.corners,
+                                  color: Colors.green.withValues(alpha: 0.8),
+                                  strokeWidth: 3 / _currentScale,
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    }),
-                  ],
+                          ...List<Widget>.generate(4, (int i) {
+                            final Offset pos = widget.corners[i];
+                            final double handleSize = _handleSizeInImage;
+                            return Positioned(
+                              left: pos.dx - handleSize / 2,
+                              top: pos.dy - handleSize / 2,
+                              width: handleSize,
+                              height: handleSize,
+                              child: IgnorePointer(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: widget.draggingIndex == i
+                                        ? Colors.blue
+                                        : Colors.green,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Colors.white,
+                                      width: 2 / _currentScale,
+                                    ),
+                                    boxShadow: <BoxShadow>[
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.3),
+                                        blurRadius: 4 / _currentScale,
+                                        offset: Offset(0, 2 / _currentScale),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      '${i + 1}',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 12 / _currentScale,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '双指缩放，单指拖角点（命中后锁定画布）',
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
             ],
