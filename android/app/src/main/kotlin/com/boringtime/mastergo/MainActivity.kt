@@ -486,7 +486,6 @@ class MainActivity : FlutterActivity() {
         val content = when (uri.scheme) {
             "file" -> {
                 val path = uri.path ?: return Pair(null, fileName)
-                if (!path.lowercase(Locale.US).endsWith(".sgf")) return Pair(null, fileName)
                 try {
                     File(path).readText(Charsets.UTF_8)
                 } catch (_: Exception) {
@@ -494,7 +493,6 @@ class MainActivity : FlutterActivity() {
                 }
             }
             "content" -> {
-                if (!fileName.lowercase(Locale.US).endsWith(".sgf")) return Pair(null, fileName)
                 try {
                     contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() }
                 } catch (_: Exception) {
@@ -503,6 +501,18 @@ class MainActivity : FlutterActivity() {
             }
             else -> null
         }
-        return Pair(content, fileName)
+        val safeContent = content ?: return Pair(null, fileName)
+        if (!fileName.lowercase(Locale.US).endsWith(".sgf") && !looksLikeSgfContent(safeContent)) {
+            return Pair(null, fileName)
+        }
+        return Pair(safeContent, fileName)
+    }
+
+    private fun looksLikeSgfContent(content: String): Boolean {
+        val trimmed = content.trimStart()
+        if (trimmed.isEmpty()) {
+            return false
+        }
+        return trimmed.startsWith("(;") || trimmed.startsWith("(")
     }
 }

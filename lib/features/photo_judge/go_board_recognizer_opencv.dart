@@ -13,7 +13,9 @@ enum BoardRecognitionStrategy {
 }
 
 extension BoardRecognitionStrategyLabel on BoardRecognitionStrategy {
-  String get label => this == BoardRecognitionStrategy.noClahe ? '默认（无CLAHE）' : '额外策略（CLAHE）';
+  String get label => this == BoardRecognitionStrategy.noClahe
+      ? 'Default (No CLAHE)'
+      : 'Alternative (CLAHE)';
 }
 
 /// 解码并预缩放大图，降低移动端内存压力。

@@ -3,11 +3,14 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:mastergo/app/app_i18n.dart';
 import 'package:mastergo/domain/entities/analysis_profile.dart';
 import 'package:mastergo/domain/entities/game_setup.dart';
 import 'package:mastergo/domain/entities/rule_presets.dart';
+import 'package:mastergo/domain/go/go_game.dart';
 import 'package:mastergo/domain/go/go_types.dart';
 import 'package:mastergo/features/common/go_board_widget.dart';
+import 'package:mastergo/features/common/ownership_result_sheet.dart';
 import 'package:mastergo/features/photo_judge/board_corner_editor.dart';
 import 'package:mastergo/features/photo_judge/go_board_recognizer_opencv.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
@@ -24,8 +27,8 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
   final KatagoAdapter _adapter = PlatformKatagoAdapter();
   static const AnalysisProfile _analysisProfile = AnalysisProfile(
     id: 'photo-judge',
-    name: '拍照判断',
-    description: '轻量分析',
+    name: 'photo-judge',
+    description: 'light-analysis',
     maxVisits: 2,
     thinkingTimeMs: 400,
     includeOwnership: true,
@@ -46,6 +49,13 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
   List<GoPoint> _hintPoints = <GoPoint>[];
   String? _hintSummary;
   String? _judgeText;
+  AppStrings get _s => AppStrings.of(context);
+  String _t({
+    required String zh,
+    required String en,
+    required String ja,
+    required String ko,
+  }) => _s.pick(zh: zh, en: en, ja: ja, ko: ko);
 
   @override
   void dispose() {
@@ -68,7 +78,12 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
       _hintPoints = <GoPoint>[];
       _hintSummary = null;
       _judgeText = null;
-      _status = '已拍照，正在校准棋盘...';
+      _status = _t(
+        zh: '已拍照，正在校准棋盘...',
+        en: 'Photo captured, calibrating board...',
+        ja: '撮影完了、盤補正中...',
+        ko: '촬영 완료, 판 보정 중...',
+      );
     });
     await _calibrateAndRecognize();
   }
@@ -88,7 +103,12 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
       _hintPoints = <GoPoint>[];
       _hintSummary = null;
       _judgeText = null;
-      _status = '已选择图片，正在校准棋盘...';
+      _status = _t(
+        zh: '已选择图片，正在校准棋盘...',
+        en: 'Image selected, calibrating board...',
+        ja: '画像選択完了、盤補正中...',
+        ko: '이미지 선택 완료, 판 보정 중...',
+      );
     });
     await _calibrateAndRecognize();
   }
@@ -100,7 +120,12 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
     if (prepared == null) {
       setState(() {
         _recognized = null;
-        _status = '图片解码失败，请重试';
+        _status = _t(
+          zh: '图片解码失败，请重试',
+          en: 'Image decode failed, try again',
+          ja: '画像デコード失敗、再試行してください',
+          ko: '이미지 디코딩 실패, 다시 시도하세요',
+        );
       });
       return;
     }
@@ -125,7 +150,12 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
     setState(() {
       _preparedPhotoBytes = preparedBytes;
       _calibratedCorners = pickedCorners;
-      _status = '校准完成，正在识别棋子...';
+      _status = _t(
+        zh: '校准完成，正在识别棋子...',
+        en: 'Calibration done, recognizing stones...',
+        ja: '補正完了、石認識中...',
+        ko: '보정 완료, 돌 인식 중...',
+      );
       _loading = true;
     });
     await _recognizeWithCurrentStrategy();
@@ -148,18 +178,28 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
       if (board == null) {
         setState(() {
           _recognized = null;
-          _status = '识别失败，请调整四角或切换策略重试';
+          _status = _t(
+            zh: '识别失败，请调整四角或切换策略重试',
+            en: 'Recognition failed, adjust corners or switch strategy',
+            ja: '認識失敗。四隅調整または戦略変更で再試行',
+            ko: '인식 실패. 모서리 조정/전략 변경 후 재시도',
+          );
         });
         return;
       }
       setState(() {
         _recognized = board;
-        _status = '识别完成（${_strategy.label}）：黑${board.blackCount}，白${board.whiteCount}';
+        _status = _t(
+          zh: '识别完成（${_strategy.label}）：黑${board.blackCount}，白${board.whiteCount}',
+          en: 'Recognition complete (${_strategyLabel(_strategy)}): B${board.blackCount}, W${board.whiteCount}',
+          ja: '認識完了（${_strategyLabel(_strategy)}）：黒${board.blackCount}、白${board.whiteCount}',
+          ko: '인식 완료(${_strategyLabel(_strategy)}): 흑${board.blackCount}, 백${board.whiteCount}',
+        );
       });
     } catch (e) {
       setState(() {
         _recognized = null;
-        _status = '识别失败: $e';
+        _status = '${_t(zh: '识别失败', en: 'Recognition failed', ja: '認識失敗', ko: '인식 실패')}: $e';
       });
     } finally {
       if (mounted) {
@@ -179,7 +219,12 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
     }
     setState(() {
       _loading = true;
-      _status = '正在分析局面...';
+      _status = _t(
+        zh: '正在分析局面...',
+        en: 'Analyzing position...',
+        ja: '局面解析中...',
+        ko: '형세 분석 중...',
+      );
       _hintPoints = <GoPoint>[];
       _hintSummary = null;
       _judgeText = null;
@@ -219,15 +264,28 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
       final double toPlayWin = _toPlay == GoStone.black
           ? blackWin
           : (1.0 - blackWin);
-      final String winner = blackWin >= 0.5 ? '黑优' : '白优';
+      final String winner = blackWin >= 0.5
+          ? _t(zh: '黑优', en: 'Black better', ja: '黒優勢', ko: '흑 우세')
+          : _t(zh: '白优', en: 'White better', ja: '白優勢', ko: '백 우세');
       final String lead = res.scoreLead >= 0
-          ? '黑领先约${res.scoreLead.abs().toStringAsFixed(1)}目'
-          : '白领先约${res.scoreLead.abs().toStringAsFixed(1)}目';
+          ? _t(
+              zh: '黑领先约${res.scoreLead.abs().toStringAsFixed(1)}目',
+              en: 'Black leads by ${res.scoreLead.abs().toStringAsFixed(1)}',
+              ja: '黒が約${res.scoreLead.abs().toStringAsFixed(1)}目リード',
+              ko: '흑 약 ${res.scoreLead.abs().toStringAsFixed(1)}집 우세',
+            )
+          : _t(
+              zh: '白领先约${res.scoreLead.abs().toStringAsFixed(1)}目',
+              en: 'White leads by ${res.scoreLead.abs().toStringAsFixed(1)}',
+              ja: '白が約${res.scoreLead.abs().toStringAsFixed(1)}目リード',
+              ko: '백 약 ${res.scoreLead.abs().toStringAsFixed(1)}집 우세',
+            );
       final List<_HintItem> hints = res.topCandidates
           .map(_toHintItem(r.boardSize))
           .whereType<_HintItem>()
           .take(res.topCandidates.length > 1 ? 3 : 1)
           .toList();
+      final GoGameState analysisState = _stateFromRecognized(r);
       setState(() {
         _hintPoints = hints.map((_HintItem h) => h.point).toList();
         _hintSummary = hints.isEmpty
@@ -240,14 +298,34 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
                   .join('  ');
         final bool likelyEndgame = _isEndgameByOwnership(res.ownership, r.boardSize);
         _judgeText = likelyEndgame
-            ? '终局判断：黑子${r.blackCount}，白子${r.whiteCount}；$winner，$lead'
-            : '中盘判断：$winner，$lead；当前执棋方胜率${(toPlayWin * 100).toStringAsFixed(1)}%';
-        final String byPlayer = _toPlay == GoStone.black ? '轮到黑' : '轮到白';
-        _status = '分析完成（按$byPlayer计算）';
+            ? _t(
+                zh: '终局判断：黑子${r.blackCount}，白子${r.whiteCount}；$winner，$lead',
+                en: 'Endgame: B${r.blackCount}, W${r.whiteCount}; $winner, $lead',
+                ja: '終局判定：黒${r.blackCount}、白${r.whiteCount}；$winner、$lead',
+                ko: '종국 판정: 흑${r.blackCount}, 백${r.whiteCount}; $winner, $lead',
+              )
+            : _t(
+                zh: '中盘判断：$winner，$lead；当前执棋方胜率${(toPlayWin * 100).toStringAsFixed(1)}%',
+                en: 'Middlegame: $winner, $lead; side-to-play winrate ${(toPlayWin * 100).toStringAsFixed(1)}%',
+                ja: '中盤判定：$winner、$lead；手番側勝率 ${(toPlayWin * 100).toStringAsFixed(1)}%',
+                ko: '중반 판정: $winner, $lead; 현재 차례 승률 ${(toPlayWin * 100).toStringAsFixed(1)}%',
+              );
+        final String byPlayer = _toPlay == GoStone.black
+            ? _t(zh: '轮到黑', en: 'Black to play', ja: '黒番', ko: '흑 차례')
+            : _t(zh: '轮到白', en: 'White to play', ja: '白番', ko: '백 차례');
+        _status = _t(
+          zh: '分析完成（按$byPlayer计算）',
+          en: 'Analysis complete ($byPlayer)',
+          ja: '解析完了（$byPlayer）',
+          ko: '분석 완료($byPlayer)',
+        );
       });
+      if (mounted) {
+        showOwnershipResultSheet(context, analysisState, res);
+      }
     } catch (e) {
       setState(() {
-        _status = '分析失败: $e';
+        _status = '${_t(zh: '分析失败', en: 'Analysis failed', ja: '解析失敗', ko: '분석 실패')}: $e';
       });
     } finally {
       if (mounted) {
@@ -263,9 +341,32 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
     _hintPoints = <GoPoint>[];
     _hintSummary = null;
     _judgeText = null;
-    if (_recognized != null && _status == '分析完成') {
-      _status = '已识别；请点击「分析局面」按当前规则与先后手重新分析';
+    if (_recognized != null &&
+        _status == _t(zh: '分析完成', en: 'Analysis complete', ja: '解析完了', ko: '분석 완료')) {
+      _status = _t(
+        zh: '已识别；请点击「分析局面」按当前规则与先后手重新分析',
+        en: 'Recognized. Tap Analyze with current rules and side-to-play.',
+        ja: '認識済み。現在の条件で再解析してください。',
+        ko: '인식 완료. 현재 규칙/차례로 다시 분석하세요.',
+      );
     }
+  }
+
+  String _strategyLabel(BoardRecognitionStrategy strategy) {
+    if (strategy == BoardRecognitionStrategy.noClahe) {
+      return _t(
+        zh: '默认（无CLAHE）',
+        en: 'Default (No CLAHE)',
+        ja: '標準（CLAHEなし）',
+        ko: '기본(CLAHE 없음)',
+      );
+    }
+    return _t(
+      zh: '额外策略（CLAHE）',
+      en: 'Alternative (CLAHE)',
+      ja: '追加戦略（CLAHE）',
+      ko: '추가 전략(CLAHE)',
+    );
   }
 
   /// 根据引擎返回的 ownership 判断是否终局：必须所有点 |ownership| 都 > 0.5 才是终局。
@@ -299,6 +400,16 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
     };
   }
 
+  GoGameState _stateFromRecognized(RecognizedBoard board) {
+    return GoGameState(
+      boardSize: board.boardSize,
+      board: board.board
+          .map((List<GoStone?> row) => List<GoStone?>.from(row))
+          .toList(),
+      toPlay: _toPlay,
+    );
+  }
+
   GoPoint? _gtpToPoint(String gtp, int boardSize) {
     if (gtp.toLowerCase() == 'pass' || gtp.length < 2) {
       return null;
@@ -320,7 +431,7 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
   Widget build(BuildContext context) {
     final RecognizedBoard? r = _recognized;
     return Scaffold(
-      appBar: AppBar(title: const Text('拍照判断')),
+      appBar: AppBar(title: Text(_s.tabPhotoJudge)),
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: <Widget>[
@@ -335,7 +446,7 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
                       .map(
                         (RulePreset p) => DropdownMenuItem<String>(
                           value: p.id,
-                          child: Text(p.label),
+                          child: Text(_s.ruleLabel(p.id)),
                         ),
                       )
                       .toList(),
@@ -347,9 +458,9 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
                       });
                     }
                   },
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     border: OutlineInputBorder(),
-                    labelText: '规则',
+                    labelText: _t(zh: '规则', en: 'Rules', ja: 'ルール', ko: '규칙'),
                   ),
                   isExpanded: true,
                 ),
@@ -357,9 +468,15 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
               const SizedBox(width: 8),
               Expanded(
                 child: SegmentedButton<GoStone>(
-                  segments: const <ButtonSegment<GoStone>>[
-                    ButtonSegment(value: GoStone.black, label: Text('轮到黑')),
-                    ButtonSegment(value: GoStone.white, label: Text('轮到白')),
+                  segments: <ButtonSegment<GoStone>>[
+                    ButtonSegment(
+                      value: GoStone.black,
+                      label: Text(_t(zh: '轮到黑', en: 'Black to play', ja: '黒番', ko: '흑 차례')),
+                    ),
+                    ButtonSegment(
+                      value: GoStone.white,
+                      label: Text(_t(zh: '轮到白', en: 'White to play', ja: '白番', ko: '백 차례')),
+                    ),
                   ],
                   selected: <GoStone>{_toPlay},
                   onSelectionChanged: (Set<GoStone> s) {
@@ -379,7 +496,7 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
                 .map(
                   (BoardRecognitionStrategy s) => DropdownMenuItem<BoardRecognitionStrategy>(
                     value: s,
-                    child: Text(s.label),
+                    child: Text(_strategyLabel(s)),
                   ),
                 )
                 .toList(),
@@ -392,9 +509,9 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
                       unawaited(_recognizeWithCurrentStrategy());
                     }
                   },
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               border: OutlineInputBorder(),
-              labelText: '识别策略',
+              labelText: _t(zh: '识别策略', en: 'Strategy', ja: '認識戦略', ko: '인식 전략'),
             ),
             isExpanded: true,
           ),
@@ -406,23 +523,21 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
               FilledButton.icon(
                 onPressed: _loading ? null : _takePhoto,
                 icon: const Icon(Icons.photo_camera),
-                label: const Text('拍照'),
+                label: Text(_t(zh: '拍照', en: 'Camera', ja: '撮影', ko: '촬영')),
               ),
               OutlinedButton.icon(
                 onPressed: _loading ? null : _pickFromGallery,
                 icon: const Icon(Icons.photo_library_outlined),
-                label: const Text('相册'),
-              ),
-              OutlinedButton.icon(
-                onPressed: (r == null || _loading) ? null : _analyzePosition,
-                icon: const Icon(Icons.analytics_outlined),
-                label: const Text('分析局面'),
+                label: Text(_t(zh: '相册', en: 'Gallery', ja: 'アルバム', ko: '앨범')),
               ),
             ],
           ),
           if (_photoBytes != null) ...<Widget>[
             const SizedBox(height: 12),
-            const Text('您选择的图片', style: TextStyle(fontWeight: FontWeight.w600)),
+            Text(
+              _t(zh: '您选择的图片', en: 'Selected Image', ja: '選択画像', ko: '선택한 이미지'),
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
             const SizedBox(height: 6),
             Center(
               child: ClipRRect(
@@ -437,7 +552,29 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
           ],
           if (r != null) ...<Widget>[
             const SizedBox(height: 16),
-            const Text('识别结果（棋盘）', style: TextStyle(fontWeight: FontWeight.w600)),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    _t(
+                      zh: '识别结果（棋盘） 黑${r.blackCount} 白${r.whiteCount}',
+                      en: 'Recognition (board) B${r.blackCount} W${r.whiteCount}',
+                      ja: '認識結果（盤） 黒${r.blackCount} 白${r.whiteCount}',
+                      ko: '인식 결과(판) 흑${r.blackCount} 백${r.whiteCount}',
+                    ),
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _loading ? null : _analyzePosition,
+                  icon: const Icon(Icons.analytics_outlined),
+                  label: Text(_t(zh: '分析局面', en: 'Analyze', ja: '局面分析', ko: '국면 분석')),
+                ),
+              ],
+            ),
             const SizedBox(height: 6),
             SizedBox(
               height: 360,
@@ -454,7 +591,16 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
           ],
           if (_hintSummary != null) ...<Widget>[
             const SizedBox(height: 6),
-            Text('提示落子: $_hintSummary', maxLines: 2, overflow: TextOverflow.ellipsis),
+            Text(
+              _t(
+                zh: '提示落子: $_hintSummary',
+                en: 'Suggested moves: $_hintSummary',
+                ja: '候補手: $_hintSummary',
+                ko: '추천 수: $_hintSummary',
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
           ],
           if (_status != null) ...<Widget>[
             const SizedBox(height: 8),

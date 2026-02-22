@@ -1,1 +1,4 @@
 "CFBundleDisplayName" = "바둑 마스터";
+"CFBundleName" = "바둑 마스터";
+"NSCameraUsageDescription" = "카메라는 바둑판을 촬영해 형세를 인식하는 데 사용됩니다.";
+"CFBundleTypeName" = "SGF 기보";

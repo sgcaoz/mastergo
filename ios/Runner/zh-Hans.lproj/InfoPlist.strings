@@ -1,1 +1,4 @@
 "CFBundleDisplayName" = "围棋大师";
+"CFBundleName" = "围棋大师";
+"NSCameraUsageDescription" = "相机用于拍摄棋盘并进行局面识别。";
+"CFBundleTypeName" = "SGF 棋谱";

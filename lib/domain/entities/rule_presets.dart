@@ -8,6 +8,7 @@ class RulePreset {
     required this.scoringRule,
     required this.koRule,
     this.whiteHandicapBonusMode = 'N',
+    this.supportsAiPlay = true,
   });
 
   final String id;
@@ -16,6 +17,7 @@ class RulePreset {
   final ScoringRule scoringRule;
   final KoRule koRule;
   final String whiteHandicapBonusMode;
+  final bool supportsAiPlay;
 
   GameRules toGameRules({double? komi}) {
     return GameRules(
@@ -56,6 +58,7 @@ const List<RulePreset> kRulePresets = <RulePreset>[
     defaultKomi: 0,
     scoringRule: ScoringRule.territory,
     koRule: KoRule.simple,
+    supportsAiPlay: false,
   ),
 ];
 

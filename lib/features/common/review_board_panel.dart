@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mastergo/app/app_i18n.dart';
 import 'package:mastergo/domain/go/go_game.dart';
 import 'package:mastergo/domain/go/go_types.dart';
 import 'package:mastergo/features/common/go_board_widget.dart';
@@ -29,6 +30,7 @@ class ReviewBoardPanel extends StatelessWidget {
     this.hintLoading = false,
     this.ownershipLoading = false,
     this.boardHeight = 320,
+    this.landscapeSideWidth = 320,
   });
 
   /// 当前展示的局面（含试下时的临时状态）
@@ -71,35 +73,45 @@ class ReviewBoardPanel extends StatelessWidget {
   final Widget? bottomChild;
   /// 棋盘区域高度
   final double boardHeight;
+  /// 横屏分栏时右侧面板宽度
+  final double landscapeSideWidth;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    final AppStrings s = AppStrings.of(context);
+    String t({
+      required String zh,
+      required String en,
+      required String ja,
+      required String ko,
+    }) => s.pick(zh: zh, en: en, ja: ja, ko: ko);
+    final Size screenSize = MediaQuery.sizeOf(context);
+    final bool useLandscapeSplit =
+        screenSize.width > screenSize.height && screenSize.width >= 700;
+
+    final Widget board = GoBoardWidget(
+      boardSize: state.boardSize,
+      board: state.board,
+      onTapPoint: tryMode ? onTryPlay : null,
+      lastMovePoint: lastMovePoint,
+      hintPoints: hintPoints,
+    );
+
+    final Widget infoPanel = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        if (title != null) ...<Widget>[
-          Text(title!, style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
-        ],
-        SizedBox(
-          height: boardHeight,
-          child: GoBoardWidget(
-            boardSize: state.boardSize,
-            board: state.board,
-            onTapPoint: tryMode ? onTryPlay : null,
-            lastMovePoint: lastMovePoint,
-            hintPoints: hintPoints,
-          ),
-        ),
-        const SizedBox(height: 8),
         Wrap(
           spacing: 8,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: <Widget>[
             OutlinedButton(
               onPressed: tryMode ? onExitTry : onEnterTry,
-              child: Text(tryMode ? '结束试下' : '试下'),
+              child: Text(
+                tryMode
+                    ? t(zh: '结束试下', en: 'End Try', ja: '試し打ち終了', ko: '시험 종료')
+                    : t(zh: '试下', en: 'Try', ja: '試し打ち', ko: '시험 수순'),
+              ),
             ),
             OutlinedButton(
               onPressed: hintLoading ? null : onRequestHint,
@@ -109,7 +121,7 @@ class ReviewBoardPanel extends StatelessWidget {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text('提示'),
+                  : Text(t(zh: '提示', en: 'Hint', ja: 'ヒント', ko: '힌트')),
             ),
             OutlinedButton(
               onPressed: ownershipLoading ? null : onRequestOwnership,
@@ -119,14 +131,26 @@ class ReviewBoardPanel extends StatelessWidget {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text('局势分析'),
+                  : Text(
+                      t(
+                        zh: '局势分析',
+                        en: 'Position',
+                        ja: '局勢解析',
+                        ko: '형세 분석',
+                      ),
+                    ),
             ),
           ],
         ),
         if (hintSummary != null && hintSummary!.isNotEmpty) ...<Widget>[
           const SizedBox(height: 6),
           Text(
-            '提示胜率: $hintSummary',
+            t(
+              zh: '提示胜率: $hintSummary',
+              en: 'Hint winrate: $hintSummary',
+              ja: '候補手勝率: $hintSummary',
+              ko: '추천 수 승률: $hintSummary',
+            ),
             style: const TextStyle(fontSize: 12),
           ),
         ],
@@ -149,6 +173,34 @@ class ReviewBoardPanel extends StatelessWidget {
         if (bottomChild != null) ...<Widget>[
           const SizedBox(height: 8),
           bottomChild!,
+        ],
+      ],
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        if (title != null) ...<Widget>[
+          Text(title!, style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+        ],
+        if (useLandscapeSplit)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Expanded(child: AspectRatio(aspectRatio: 1, child: board)),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: landscapeSideWidth,
+                child: SingleChildScrollView(child: infoPanel),
+              ),
+            ],
+          )
+        else ...<Widget>[
+          SizedBox(height: boardHeight, child: board),
+          const SizedBox(height: 8),
+          infoPanel,
         ],
       ],
     );

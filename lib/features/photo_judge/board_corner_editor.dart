@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:mastergo/app/app_i18n.dart';
 
 /// 角点调整页：显示图片 + 四角覆盖层，支持拖动。
 class BoardCornerEditorPage extends StatefulWidget {
@@ -37,14 +38,35 @@ class _BoardCornerEditorPageState extends State<BoardCornerEditorPage> {
 
   @override
   Widget build(BuildContext context) {
+    final AppStrings s = AppStrings.of(context);
+    String t({
+      required String zh,
+      required String en,
+      required String ja,
+      required String ko,
+    }) => s.pick(zh: zh, en: en, ja: ja, ko: ko);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('调整棋盘四角'),
+        title: Text(
+          t(
+            zh: '调整棋盘四角',
+            en: 'Adjust Board Corners',
+            ja: '盤の四隅を調整',
+            ko: '바둑판 네 모서리 조정',
+          ),
+        ),
         actions: <Widget>[
           TextButton.icon(
             onPressed: _onConfirm,
             icon: const Icon(Icons.check),
-            label: const Text('确认识别'),
+            label: Text(
+              t(
+                zh: '确认识别',
+                en: 'Confirm',
+                ja: '認識確定',
+                ko: '인식 확정',
+              ),
+            ),
           ),
         ],
       ),
@@ -208,6 +230,13 @@ class _ImageWithCornersOverlayState extends State<_ImageWithCornersOverlay> {
 
   @override
   Widget build(BuildContext context) {
+    final AppStrings s = AppStrings.of(context);
+    String t({
+      required String zh,
+      required String en,
+      required String ja,
+      required String ko,
+    }) => s.pick(zh: zh, en: en, ja: ja, ko: ko);
     final int imgW = widget.imageWidth;
     final int imgH = widget.imageHeight;
 
@@ -223,7 +252,12 @@ class _ImageWithCornersOverlayState extends State<_ImageWithCornersOverlay> {
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
               Text(
-                '请按 1左上 / 2右上 / 3右下 / 4左下 对准棋盘四个交点。\n仅框内区域参与识别：框内更亮，框外灰暗。',
+                t(
+                  zh: '请按 1左上 / 2右上 / 3右下 / 4左下 对准棋盘四个交点。\n仅框内区域参与识别：框内更亮，框外灰暗。',
+                  en: 'Align corners in order: 1 TL / 2 TR / 3 BR / 4 BL.\nOnly inside the frame is used for recognition.',
+                  ja: '1左上 / 2右上 / 3右下 / 4左下 の順で交点に合わせてください。\n枠内のみ認識対象です。',
+                  ko: '1좌상 / 2우상 / 3우하 / 4좌하 순서로 맞춰주세요.\n프레임 내부만 인식합니다.',
+                ),
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Colors.grey,
                     ),
@@ -331,7 +365,12 @@ class _ImageWithCornersOverlayState extends State<_ImageWithCornersOverlay> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  '双指缩放，单指拖角点（命中后锁定画布）',
+                  t(
+                    zh: '双指缩放，单指拖角点（命中后锁定画布）',
+                    en: 'Pinch to zoom, drag corner with one finger',
+                    ja: 'ピンチで拡大縮小、1本指で角点をドラッグ',
+                    ko: '두 손가락 확대/축소, 한 손가락으로 모서리 드래그',
+                  ),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),

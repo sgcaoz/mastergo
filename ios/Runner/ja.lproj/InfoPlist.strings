@@ -1,1 +1,4 @@
 "CFBundleDisplayName" = "囲碁マスター";
+"CFBundleName" = "囲碁マスター";
+"NSCameraUsageDescription" = "カメラは碁盤を撮影して局面認識を行うために使用します。";
+"CFBundleTypeName" = "SGF棋譜";

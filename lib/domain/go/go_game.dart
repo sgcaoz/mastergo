@@ -354,11 +354,11 @@ class GoScore {
   String winnerText() {
     final double lead = leadForBlack;
     if (lead > 0) {
-      return '黑胜 ${lead.toStringAsFixed(1)} 目';
+      return 'Black wins by ${lead.toStringAsFixed(1)}';
     }
     if (lead < 0) {
-      return '白胜 ${(-lead).toStringAsFixed(1)} 目';
+      return 'White wins by ${(-lead).toStringAsFixed(1)}';
     }
-    return '和棋';
+    return 'Draw';
   }
 }
