@@ -467,24 +467,58 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: SegmentedButton<GoStone>(
-                  segments: <ButtonSegment<GoStone>>[
-                    ButtonSegment(
-                      value: GoStone.black,
-                      label: Text(_t(zh: '轮到黑', en: 'Black to play', ja: '黒番', ko: '흑 차례')),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      _t(zh: '下一步轮到', en: 'Next Step', ja: '次の手番', ko: '다음 수순'),
+                      style: Theme.of(context).textTheme.titleSmall,
                     ),
-                    ButtonSegment(
-                      value: GoStone.white,
-                      label: Text(_t(zh: '轮到白', en: 'White to play', ja: '白番', ko: '백 차례')),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        children: <Widget>[
+                          _stoneWithLabel(
+                            stone: GoStone.black,
+                            label: _t(zh: '黑', en: 'Black', ja: '黒', ko: '흑'),
+                            selected: _toPlay == GoStone.black,
+                          ),
+                          Switch.adaptive(
+                            value: _toPlay == GoStone.white,
+                            activeTrackColor: Theme.of(
+                              context,
+                            ).colorScheme.surfaceContainerHighest,
+                            inactiveTrackColor: Theme.of(
+                              context,
+                            ).colorScheme.surfaceContainerHighest,
+                            thumbColor: WidgetStateProperty.resolveWith<Color>((Set<WidgetState> states) {
+                              return states.contains(WidgetState.selected)
+                                  ? Colors.white
+                                  : Colors.black;
+                            }),
+                            onChanged: _loading
+                                ? null
+                                : (bool whiteTurn) {
+                                    setState(() {
+                                      _toPlay = whiteTurn ? GoStone.white : GoStone.black;
+                                      _clearAnalysisResult();
+                                    });
+                                  },
+                          ),
+                          _stoneWithLabel(
+                            stone: GoStone.white,
+                            label: _t(zh: '白', en: 'White', ja: '白', ko: '백'),
+                            selected: _toPlay == GoStone.white,
+                          ),
+                        ],
+                      ),
                     ),
                   ],
-                  selected: <GoStone>{_toPlay},
-                  onSelectionChanged: (Set<GoStone> s) {
-                    setState(() {
-                      _toPlay = s.first;
-                      _clearAnalysisResult();
-                    });
-                  },
                 ),
               ),
             ],
@@ -608,6 +642,37 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
           ],
         ],
       ),
+    );
+  }
+
+  Widget _stoneWithLabel({
+    required GoStone stone,
+    required String label,
+    required bool selected,
+  }) {
+    final ColorScheme cs = Theme.of(context).colorScheme;
+    final Color textColor = selected ? cs.onSurface : cs.onSurfaceVariant;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Container(
+          width: 16,
+          height: 16,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: stone == GoStone.black ? Colors.black : Colors.white,
+            border: Border.all(color: Colors.black26),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(
+            color: textColor,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+          ),
+        ),
+      ],
     );
   }
 }

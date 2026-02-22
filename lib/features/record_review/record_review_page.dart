@@ -5,7 +5,6 @@ import 'dart:io' show Directory, File, Platform;
 import 'package:external_path/external_path.dart';
 import 'package:path/path.dart' as p;
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
@@ -82,7 +81,7 @@ void _showInvalidSgfMessage(BuildContext context) {
     );
 }
 
-Future<_PickedSgfFile?> pickSgfWithDownloadPriority(BuildContext context) async {
+Future<_PickedSgfFile?> _pickSgfWithDownloadPriority(BuildContext context) async {
   Future<_PickedSgfFile?> pickFromSystem({String? initialDirectory}) async {
     final FilePickerResult? pick = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -216,7 +215,16 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   String? _status;
   String? _recordId;
   String _recordSource = 'download';
-  AppStrings get _s => AppStrings.of(context);
+  late AppLanguage _language;
+  AppLanguage _effectiveLanguage() {
+    try {
+      return AppStrings.resolveFromLocale(Localizations.localeOf(context));
+    } catch (_) {
+      return _language;
+    }
+  }
+
+  AppStrings get _s => AppStrings(_effectiveLanguage());
   String _t({
     required String zh,
     required String en,
@@ -698,6 +706,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   @override
   void initState() {
     super.initState();
+    _language = AppStrings.resolveFromLocale(
+      WidgetsBinding.instance.platformDispatcher.locale,
+    );
     if (widget.initialSgfContent != null &&
         widget.initialSgfContent!.isNotEmpty) {
       final SgfGame parsed = _sgfParser.parse(widget.initialSgfContent!);
@@ -726,6 +737,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       );
     }
     unawaited(_loadInitialRecordWinrates());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _language = _effectiveLanguage();
   }
 
   bool _openWithSgfConsumed = false;
@@ -803,7 +820,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
 
   /// 唯一入口：先选文件夹，再在列表中选一个 SGF。优先从下载目录打开以兼容刚下载的文件。
   Future<void> _importSgf() async {
-    final _PickedSgfFile? picked = await pickSgfWithDownloadPriority(context);
+    final _PickedSgfFile? picked = await _pickSgfWithDownloadPriority(context);
     if (picked == null) {
       return;
     }
@@ -1734,7 +1751,7 @@ class _ImportSgfPageState extends State<_ImportSgfPage> {
       _status = null;
     });
     try {
-      final _PickedSgfFile? picked = await pickSgfWithDownloadPriority(context);
+      final _PickedSgfFile? picked = await _pickSgfWithDownloadPriority(context);
       if (picked == null) {
         return;
       }

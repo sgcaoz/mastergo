@@ -40,10 +40,31 @@ class _AIPlayPageState extends State<AIPlayPage> {
 
   int _boardSize = 19;
   int _handicap = 0;
-  bool _guessFirst = true;
   String _selectedRulesetId = 'chinese';
   String? _selectedProfileId;
-  AppStrings get _s => AppStrings.of(context);
+  late AppLanguage _language;
+  AppStrings get _s => AppStrings(_language);
+  AppLanguage _effectiveLanguage() {
+    try {
+      return AppStrings.resolveFromLocale(Localizations.localeOf(context));
+    } catch (_) {
+      return _language;
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _language = AppStrings.resolveFromLocale(
+      WidgetsBinding.instance.platformDispatcher.locale,
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _language = _effectiveLanguage();
+  }
 
   @override
   void dispose() {
@@ -78,7 +99,7 @@ class _AIPlayPageState extends State<AIPlayPage> {
           profile: profile,
           boardSize: _boardSize,
           handicap: _handicap,
-          randomFirst: _guessFirst,
+          randomFirst: true,
           rules: _activeRulePreset.toGameRules(),
           preferredRestoreRecordId: widget.initialRestoreRecordId,
         ),
@@ -286,40 +307,6 @@ class _AIPlayPageState extends State<AIPlayPage> {
                     ko: 'AI 접바둑: $_handicap',
                   ),
                 ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(
-                    _s.pick(
-                      zh: '猜先（随机先后）',
-                      en: 'Random first move',
-                      ja: '先後ランダム',
-                      ko: '선후 랜덤',
-                    ),
-                  ),
-                  subtitle: Text(
-                    _handicap > 0
-                        ? _s.pick(
-                            zh: '让子局固定你执黑（猜先不生效）',
-                            en: 'With handicap, you are fixed as black',
-                            ja: '置石局ではあなたは黒固定です',
-                            ko: '접바둑에서는 당신이 흑 고정입니다',
-                          )
-                        : _s.pick(
-                            zh: '开启后随机分配你执黑或执白',
-                            en: 'When enabled, black/white is random',
-                            ja: '有効時は黒白がランダムです',
-                            ko: '활성화 시 흑/백이 랜덤 배정됩니다',
-                          ),
-                  ),
-                  value: _guessFirst,
-                  onChanged: _handicap > 0
-                      ? null
-                      : (bool value) {
-                          setState(() {
-                            _guessFirst = value;
-                          });
-                        },
-                ),
                 const SizedBox(height: 8),
                 FilledButton.icon(
                   onPressed: selected == null
@@ -415,13 +402,26 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   String _status = 'Preparing...';
   double? _blackWinrate;
   final Map<int, double> _winrateByTurn = <int, double>{};
-  AppStrings get _s => AppStrings.of(context);
+  late AppLanguage _language;
+  AppStrings get _s => AppStrings(_language);
+  AppLanguage _effectiveLanguage() {
+    try {
+      return AppStrings.resolveFromLocale(Localizations.localeOf(context));
+    } catch (_) {
+      return _language;
+    }
+  }
   String _t({
     required String zh,
     required String en,
     required String ja,
     required String ko,
-  }) => _s.pick(zh: zh, en: en, ja: ja, ko: ko);
+  }) => AppStrings(_effectiveLanguage()).pick(
+    zh: zh,
+    en: en,
+    ja: ja,
+    ko: ko,
+  );
 
   double? get _playerWinrate {
     if (_blackWinrate == null) {
@@ -481,6 +481,9 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   @override
   void initState() {
     super.initState();
+    _language = AppStrings.resolveFromLocale(
+      WidgetsBinding.instance.platformDispatcher.locale,
+    );
     _rules = widget.handicap > 0
         ? widget.rules.copyWith(komi: 0)
         : widget.rules;
@@ -492,6 +495,17 @@ class _AIBattlePageState extends State<_AIBattlePage> {
         setState(() {});
       }
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final AppLanguage next = _effectiveLanguage();
+    final bool changed = next != _language;
+    _language = next;
+    if (changed && _game != null) {
+      _status = _localizedStatusForCurrentState(_game!);
+    }
   }
 
   @override
@@ -578,27 +592,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     _activeClockStone = null;
     _activeClockStartedAt = null;
     _startClockFor(toPlay);
-    _status = widget.handicap > 0
-        ? _t(
-            zh:
-                '${_handicapLabel}，贴目${_rules.komi.toStringAsFixed(1)}，你执黑，${toPlay == _playerStone ? '请落子' : 'AI先行'}',
-            en:
-                '${_handicapLabel}, komi ${_rules.komi.toStringAsFixed(1)}, you are Black, ${toPlay == _playerStone ? 'your move' : 'AI first'}',
-            ja:
-                '${_handicapLabel}、コミ${_rules.komi.toStringAsFixed(1)}、あなたは黒、${toPlay == _playerStone ? '着手してください' : 'AI先手'}',
-            ko:
-                '${_handicapLabel}, 덤 ${_rules.komi.toStringAsFixed(1)}, 당신은 흑, ${toPlay == _playerStone ? '착수하세요' : 'AI 선착'}',
-          )
-        : _t(
-            zh:
-                '$_handicapLabel，你执${_playerStone == GoStone.black ? '黑' : '白'}，${toPlay == _playerStone ? '请落子' : 'AI先行'}',
-            en:
-                '$_handicapLabel, you are ${_playerStone == GoStone.black ? 'Black' : 'White'}, ${toPlay == _playerStone ? 'your move' : 'AI first'}',
-            ja:
-                '$_handicapLabel、あなたは${_playerStone == GoStone.black ? '黒' : '白'}、${toPlay == _playerStone ? '着手してください' : 'AI先手'}',
-            ko:
-                '$_handicapLabel, 당신은 ${_playerStone == GoStone.black ? '흑' : '백'}, ${toPlay == _playerStone ? '착수하세요' : 'AI 선착'}',
-          );
+    _status = _buildOpeningStatus(toPlay);
 
     if (shouldPersist) {
       unawaited(_persistSession());
@@ -1217,6 +1211,58 @@ class _AIBattlePageState extends State<_AIBattlePage> {
     );
   }
 
+  String _buildOpeningStatus(GoStone toPlay) {
+    return widget.handicap > 0
+        ? _t(
+            zh:
+                '$_handicapLabel，贴目${_rules.komi.toStringAsFixed(1)}，你执黑，${toPlay == _playerStone ? '请落子' : 'AI先行'}',
+            en:
+                '$_handicapLabel, komi ${_rules.komi.toStringAsFixed(1)}, you are Black, ${toPlay == _playerStone ? 'your move' : 'AI first'}',
+            ja:
+                '$_handicapLabel、コミ${_rules.komi.toStringAsFixed(1)}、あなたは黒、${toPlay == _playerStone ? '着手してください' : 'AI先手'}',
+            ko:
+                '$_handicapLabel, 덤 ${_rules.komi.toStringAsFixed(1)}, 당신은 흑, ${toPlay == _playerStone ? '착수하세요' : 'AI 선착'}',
+          )
+        : _t(
+            zh:
+                '$_handicapLabel，你执${_playerStone == GoStone.black ? '黑' : '白'}，${toPlay == _playerStone ? '请落子' : 'AI先行'}',
+            en:
+                '$_handicapLabel, you are ${_playerStone == GoStone.black ? 'Black' : 'White'}, ${toPlay == _playerStone ? 'your move' : 'AI first'}',
+            ja:
+                '$_handicapLabel、あなたは${_playerStone == GoStone.black ? '黒' : '白'}、${toPlay == _playerStone ? '着手してください' : 'AI先手'}',
+            ko:
+                '$_handicapLabel, 당신은 ${_playerStone == GoStone.black ? '흑' : '백'}, ${toPlay == _playerStone ? '착수하세요' : 'AI 선착'}',
+          );
+  }
+
+  String _localizedStatusForCurrentState(GoGameState state) {
+    if (_isGameOver) {
+      return _resignResultText ??
+          _t(zh: '终局', en: 'Game over', ja: '終局', ko: '종국');
+    }
+    if (_aiThinking) {
+      return _t(
+        zh: 'AI思考中...',
+        en: 'AI is thinking...',
+        ja: 'AI思考中...',
+        ko: 'AI 생각 중...',
+      );
+    }
+    return state.toPlay == _playerStone
+        ? _t(
+            zh: '轮到你落子',
+            en: 'Your move',
+            ja: 'あなたの番',
+            ko: '당신 차례',
+          )
+        : _t(
+            zh: '轮到AI落子',
+            en: 'AI turn',
+            ja: 'AIの番',
+            ko: 'AI 차례',
+          );
+  }
+
   bool _shouldAiResign(double aiWinrate) {
     final int moveCount = _game?.moves.length ?? 0;
     final int threshold = switch (widget.boardSize) {
@@ -1319,7 +1365,6 @@ class _AIBattlePageState extends State<_AIBattlePage> {
       'winrateByTurn': _winrateByTurn.map(
         (int k, double v) => MapEntry<String, dynamic>(k.toString(), v),
       ),
-      'status': _status,
       'finalScore': _finalScore == null
           ? null
           : <String, dynamic>{
@@ -1498,13 +1543,6 @@ class _AIBattlePageState extends State<_AIBattlePage> {
                     MapEntry<int, double>(int.parse(k), (v as num).toDouble()),
               )),
         );
-      _status = data['status'] as String? ??
-          _t(
-            zh: '已恢复上局',
-            en: 'Previous game restored',
-            ja: '前局を復元しました',
-            ko: '이전 대국을 복원했습니다',
-          );
       _finalResultTextFromAnalysis =
           data['finalResultTextFromAnalysis'] as String?;
       _resignResultText = data['resignResult'] as String?;
@@ -1536,6 +1574,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
       } else {
         _freezeActiveClock();
       }
+      _status = _localizedStatusForCurrentState(state);
       return true;
     } catch (_) {
       return false;
