@@ -261,41 +261,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     if (result == null || result.sgf.trim().isEmpty) {
       return;
     }
-    final SgfGame parsed = _sgfParser.parse(result.sgf);
-    final String normalizedRuleset = rulePresetFromString(result.ruleset).id;
-    final double komi = result.komi;
-    _recordId = _recordRepository.newId(prefix: result.source);
-    _recordSource = result.source;
-    await _recordRepository.saveOrUpdateSourceRecord(
-      id: _recordId,
-      source: _recordSource,
-      title: result.title,
-      boardSize: parsed.boardSize,
-      ruleset: normalizedRuleset,
-      komi: komi,
-      sgf: result.sgf,
-      status: 'ready',
-      winrateJson: jsonEncode(<String, double>{}),
-    );
-    unawaited(saveSgfToDownloadDirectory(result.sgf, result.title));
-    _sourceFutures.remove(result.source);
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _sgf = parsed;
-      _ruleset = normalizedRuleset;
-      _komiController.text = komi.toStringAsFixed(1);
-      _path = <SgfNode>[];
-      _selectedVariation = 0;
-      _winrates.clear();
-      _status = _t(
-        zh: '已导入 ${result.title}',
-        en: 'Imported ${result.title}',
-        ja: '${result.title} をインポートしました',
-        ko: '${result.title} 가져오기 완료',
-      );
-    });
+    await _applyImportedSgf(result.sgf, result.title);
   }
 
   Future<void> _openRecord(GameRecord record) async {
@@ -319,31 +285,78 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         ),
       ),
     );
+    if (!mounted) return;
+    setState(() {
+      _sourceFutures
+        ..remove('battle_local')
+        ..remove('download');
+    });
+  }
+
+  Future<List<GameRecord>> _loadLocalBattleRecords() async {
+    // Data correction: promote legacy temp records once they exceed 20 moves.
+    final List<GameRecord> temp = await _recordRepository.listBySource(
+      'battle_temp',
+    );
+    for (final GameRecord r in temp) {
+      int moves = 0;
+      try {
+        final Map<String, dynamic> data =
+            jsonDecode(r.sessionJson) as Map<String, dynamic>;
+        moves = (data['moves'] as List<dynamic>? ?? <dynamic>[]).length;
+      } catch (_) {
+        try {
+          moves = _sgfParser.parse(r.sgf).mainLineNodes().length;
+        } catch (_) {
+          moves = 0;
+        }
+      }
+      if (moves >= 20) {
+        await _recordRepository.upsert(
+          GameRecord(
+            id: r.id,
+            source: 'battle_local',
+            title: r.title,
+            boardSize: r.boardSize,
+            ruleset: r.ruleset,
+            komi: r.komi,
+            sgf: r.sgf,
+            status: r.status,
+            sessionJson: r.sessionJson,
+            winrateJson: r.winrateJson,
+            createdAtMs: r.createdAtMs,
+            updatedAtMs: r.updatedAtMs,
+          ),
+        );
+      }
+    }
+    return _recordRepository.listBySource('battle_local');
   }
 
   Widget _buildRecordList(String source) {
-    final Future<List<GameRecord>> future =
-        _sourceFutures[source] ??= () async {
-          if (source != 'download') {
-            return _recordRepository.listBySource(source);
-          }
-          // 单一可见列表：下载页兼容展示历史 import 与当前 download。
-          final List<GameRecord> download = await _recordRepository.listBySource(
-            'download',
-          );
-          final List<GameRecord> legacyImport = await _recordRepository
-              .listBySource('import');
-          final Map<String, GameRecord> merged = <String, GameRecord>{};
-          for (final GameRecord r in <GameRecord>[...download, ...legacyImport]) {
-            final GameRecord? old = merged[r.id];
-            if (old == null || r.updatedAtMs > old.updatedAtMs) {
-              merged[r.id] = r;
+    final Future<List<GameRecord>> future = source == 'battle_local'
+        ? _loadLocalBattleRecords()
+        : (_sourceFutures[source] ??= () async {
+            if (source != 'download') {
+              return _recordRepository.listBySource(source);
             }
-          }
-          final List<GameRecord> list = merged.values.toList()
-            ..sort((GameRecord a, GameRecord b) => b.updatedAtMs.compareTo(a.updatedAtMs));
-          return list;
-        }();
+            // 单一可见列表：下载页兼容展示历史 import 与当前 download。
+            final List<GameRecord> download = await _recordRepository.listBySource(
+              'download',
+            );
+            final List<GameRecord> legacyImport = await _recordRepository
+                .listBySource('import');
+            final Map<String, GameRecord> merged = <String, GameRecord>{};
+            for (final GameRecord r in <GameRecord>[...download, ...legacyImport]) {
+              final GameRecord? old = merged[r.id];
+              if (old == null || r.updatedAtMs > old.updatedAtMs) {
+                merged[r.id] = r;
+              }
+            }
+            final List<GameRecord> list = merged.values.toList()
+              ..sort((GameRecord a, GameRecord b) => b.updatedAtMs.compareTo(a.updatedAtMs));
+            return list;
+          }());
     return FutureBuilder<List<GameRecord>>(
       future: future,
       builder: (BuildContext context, AsyncSnapshot<List<GameRecord>> snapshot) {
@@ -412,6 +425,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                                   ),
                                 ),
                               );
+                              if (!mounted) return;
+                              setState(() {});
                             },
                             child: Text(
                               _t(
@@ -863,7 +878,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         parsed.rules.isEmpty ? _ruleset : rulePresetFromString(parsed.rules).id;
     final GameRecord? existing =
         await _recordRepository.findImportBySgfContent(content);
-    final String recordId = existing?.id ?? _recordRepository.newId(prefix: 'download');
+    final String recordId =
+        existing?.id ?? _recordRepository.newId(prefix: 'download');
     final String winrateJson =
         existing?.winrateJson ?? jsonEncode(<String, double>{});
     setState(() {
@@ -875,10 +891,10 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _winrates.clear();
       _status = existing != null
           ? _t(
-              zh: '已更新 $fileName（同棋谱去重）',
-              en: 'Updated $fileName (deduplicated)',
-              ja: '$fileName を更新（重複除外）',
-              ko: '$fileName 업데이트(중복 제거)',
+              zh: '重复棋谱：已存在，未重复导入',
+              en: 'Duplicate SGF: already exists, import skipped',
+              ja: '重複棋譜: 既に存在するためインポートをスキップしました',
+              ko: '중복 기보: 이미 존재하여 가져오기를 건너뜁니다',
             )
           : _t(
               zh: '已导入 $fileName',
@@ -889,18 +905,20 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     });
     _recordId = recordId;
     _recordSource = 'download';
-    await _recordRepository.saveOrUpdateSourceRecord(
-      id: recordId,
-      source: _recordSource,
-      title: fileName,
-      boardSize: parsed.boardSize,
-      ruleset: ruleset,
-      komi: parsed.komi,
-      sgf: content,
-      status: 'ready',
-      winrateJson: winrateJson,
-    );
-    unawaited(saveSgfToDownloadDirectory(content, fileName));
+    if (existing == null) {
+      await _recordRepository.saveOrUpdateSourceRecord(
+        id: recordId,
+        source: _recordSource,
+        title: fileName,
+        boardSize: parsed.boardSize,
+        ruleset: ruleset,
+        komi: parsed.komi,
+        sgf: content,
+        status: 'ready',
+        winrateJson: winrateJson,
+      );
+      unawaited(saveSgfToDownloadDirectory(content, fileName));
+    }
     if (mounted) {
       setState(() => _sourceFutures.remove('download'));
     }
@@ -956,25 +974,32 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         );
       }
       final SgfGame parsed = _sgfParser.parse(content);
-      _recordId = _recordRepository.newId(prefix: 'download');
-      _recordSource = 'download';
       final String title = uri.pathSegments.isNotEmpty
           ? uri.pathSegments.last
           : 'downloaded.sgf';
-      await _recordRepository.saveOrUpdateSourceRecord(
-        id: _recordId,
-        source: _recordSource,
-        title: title,
-        boardSize: parsed.boardSize,
-        ruleset: parsed.rules.isEmpty
-            ? _ruleset
-            : rulePresetFromString(parsed.rules).id,
-        komi: parsed.komi,
-        sgf: content,
-        status: 'ready',
-        winrateJson: jsonEncode(<String, double>{}),
-      );
-      unawaited(saveSgfToDownloadDirectory(content, title));
+      final GameRecord? existing =
+          await _recordRepository.findImportBySgfContent(content);
+      if (existing == null) {
+        _recordId = _recordRepository.newId(prefix: 'download');
+        _recordSource = 'download';
+        await _recordRepository.saveOrUpdateSourceRecord(
+          id: _recordId,
+          source: _recordSource,
+          title: title,
+          boardSize: parsed.boardSize,
+          ruleset: parsed.rules.isEmpty
+              ? _ruleset
+              : rulePresetFromString(parsed.rules).id,
+          komi: parsed.komi,
+          sgf: content,
+          status: 'ready',
+          winrateJson: jsonEncode(<String, double>{}),
+        );
+        unawaited(saveSgfToDownloadDirectory(content, title));
+      } else {
+        _recordId = existing.id;
+        _recordSource = existing.source;
+      }
       if (!mounted) {
         return;
       }
@@ -988,12 +1013,19 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         _path = <SgfNode>[];
         _selectedVariation = 0;
         _winrates.clear();
-        _status = _t(
-          zh: '下载并导入成功',
-          en: 'Download and import succeeded',
-          ja: 'ダウンロードとインポートに成功しました',
-          ko: '다운로드 및 가져오기 성공',
-        );
+        _status = existing == null
+            ? _t(
+                zh: '下载并导入成功',
+                en: 'Download and import succeeded',
+                ja: 'ダウンロードとインポートに成功しました',
+                ko: '다운로드 및 가져오기 성공',
+              )
+            : _t(
+                zh: '重复棋谱：已存在，未重复导入',
+                en: 'Duplicate SGF: already exists, import skipped',
+                ja: '重複棋譜: 既に存在するためインポートをスキップしました',
+                ko: '중복 기보: 이미 존재하여 가져오기를 건너뜁니다',
+              );
       });
     } catch (e) {
       if (!mounted) {
@@ -1361,6 +1393,31 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     );
   }
 
+  Future<void> _showFullBlackName() async {
+    final String blackName = (_sgf?.blackName ?? '').trim();
+    if (blackName.isEmpty) {
+      return;
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(
+            _t(zh: '黑方全名', en: 'Black full name', ja: '黒番フルネーム', ko: '흑 전체 이름'),
+          ),
+          content: SelectableText(blackName),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(_t(zh: '关闭', en: 'Close', ja: '閉じる', ko: '닫기')),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_sgf == null) {
@@ -1577,7 +1634,6 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                 ),
                 Expanded(
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
                       Text(
                         _t(
@@ -1588,11 +1644,19 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Text(
-                        _winrates.containsKey(_currentTurn)
-                            ? '${_blackWinrateLabel()}: ${(_winrates[_currentTurn]! * 100).toStringAsFixed(1)}%'
-                            : '${_blackWinrateLabel()}: --',
-                        style: const TextStyle(fontSize: 13),
+                      Expanded(
+                        child: InkWell(
+                          onTap: _showFullBlackName,
+                          borderRadius: BorderRadius.circular(4),
+                          child: Text(
+                            _winrates.containsKey(_currentTurn)
+                                ? '${_blackWinrateLabel()}: ${(_winrates[_currentTurn]! * 100).toStringAsFixed(1)}%'
+                                : '${_blackWinrateLabel()}: --',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        ),
                       ),
                     ],
                   ),

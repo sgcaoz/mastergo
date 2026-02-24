@@ -472,11 +472,12 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
                   children: <Widget>[
                     Text(
                       _t(zh: '下一步轮到', en: 'Next Step', ja: '次の手番', ko: '다음 수순'),
-                      style: Theme.of(context).textTheme.titleSmall,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(fontSize: 13),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 4),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
                         color: Theme.of(context).colorScheme.surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(12),
@@ -488,27 +489,35 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
                             label: _t(zh: '黑', en: 'Black', ja: '黒', ko: '흑'),
                             selected: _toPlay == GoStone.black,
                           ),
-                          Switch.adaptive(
-                            value: _toPlay == GoStone.white,
-                            activeTrackColor: Theme.of(
-                              context,
-                            ).colorScheme.surfaceContainerHighest,
-                            inactiveTrackColor: Theme.of(
-                              context,
-                            ).colorScheme.surfaceContainerHighest,
-                            thumbColor: WidgetStateProperty.resolveWith<Color>((Set<WidgetState> states) {
-                              return states.contains(WidgetState.selected)
-                                  ? Colors.white
-                                  : Colors.black;
-                            }),
-                            onChanged: _loading
-                                ? null
-                                : (bool whiteTurn) {
-                                    setState(() {
-                                      _toPlay = whiteTurn ? GoStone.white : GoStone.black;
-                                      _clearAnalysisResult();
-                                    });
-                                  },
+                          Transform.scale(
+                            scale: 0.85,
+                            child: Switch.adaptive(
+                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              value: _toPlay == GoStone.white,
+                              activeTrackColor: Theme.of(
+                                context,
+                              ).colorScheme.surfaceContainerHighest,
+                              inactiveTrackColor: Theme.of(
+                                context,
+                              ).colorScheme.surfaceContainerHighest,
+                              trackOutlineColor: WidgetStateProperty.all(
+                                const Color(0xFF424242),
+                              ),
+                              trackOutlineWidth: WidgetStateProperty.all(1),
+                              thumbColor: WidgetStateProperty.resolveWith<Color>((Set<WidgetState> states) {
+                                return states.contains(WidgetState.selected)
+                                    ? Colors.white
+                                    : Colors.black;
+                              }),
+                              onChanged: _loading
+                                  ? null
+                                  : (bool whiteTurn) {
+                                      setState(() {
+                                        _toPlay = whiteTurn ? GoStone.white : GoStone.black;
+                                        _clearAnalysisResult();
+                                      });
+                                    },
+                            ),
                           ),
                           _stoneWithLabel(
                             stone: GoStone.white,
@@ -664,11 +673,12 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
             border: Border.all(color: Colors.black26),
           ),
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: 2),
         Text(
           label,
           style: TextStyle(
             color: textColor,
+            fontSize: 12,
             fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
           ),
         ),

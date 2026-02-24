@@ -374,7 +374,8 @@ class _AIBattlePage extends StatefulWidget {
   State<_AIBattlePage> createState() => _AIBattlePageState();
 }
 
-class _AIBattlePageState extends State<_AIBattlePage> {
+class _AIBattlePageState extends State<_AIBattlePage>
+    with WidgetsBindingObserver {
   static const bool _requireDoubleTapConfirm = true;
   final GameAnalysisService _analysisService = const GameAnalysisService();
   final GameRecordRepository _recordRepository = GameRecordRepository();
@@ -481,6 +482,7 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _language = AppStrings.resolveFromLocale(
       WidgetsBinding.instance.platformDispatcher.locale,
     );
@@ -509,7 +511,18 @@ class _AIBattlePageState extends State<_AIBattlePage> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(_persistSession());
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_persistSession());
     _freezeActiveClock();
     _ticker?.cancel();
     super.dispose();

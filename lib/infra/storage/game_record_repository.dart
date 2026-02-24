@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'dart:math';
+import 'dart:convert';
 
 import 'package:flutter/services.dart';
+import 'package:crypto/crypto.dart';
 import 'package:mastergo/domain/entities/game_record.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
@@ -28,7 +30,7 @@ class GameRecordRepository {
     }
     _db = await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (Database db, int version) async {
         await db.execute('''
           CREATE TABLE $_table(
@@ -42,12 +44,16 @@ class GameRecordRepository {
             status TEXT NOT NULL,
             sessionJson TEXT NOT NULL,
             winrateJson TEXT NOT NULL,
+            sgfHash TEXT,
             createdAtMs INTEGER NOT NULL,
             updatedAtMs INTEGER NOT NULL
           )
         ''');
         await db.execute(
           'CREATE INDEX idx_records_source_updated ON $_table(source, updatedAtMs DESC)',
+        );
+        await db.execute(
+          'CREATE INDEX idx_records_source_sgfHash ON $_table(source, sgfHash)',
         );
       },
       onUpgrade: (Database db, int oldVersion, int newVersion) async {
@@ -70,12 +76,16 @@ class GameRecordRepository {
                 status TEXT NOT NULL,
                 sessionJson TEXT NOT NULL,
                 winrateJson TEXT NOT NULL,
+                sgfHash TEXT,
                 createdAtMs INTEGER NOT NULL,
                 updatedAtMs INTEGER NOT NULL
               )
             ''');
             await db.execute(
               'CREATE INDEX idx_records_source_updated ON $_table(source, updatedAtMs DESC)',
+            );
+            await db.execute(
+              'CREATE INDEX idx_records_source_sgfHash ON $_table(source, sgfHash)',
             );
           }
         }
@@ -109,6 +119,31 @@ class GameRecordRepository {
             );
           }
         }
+        if (oldVersion < 3 && newVersion >= 3) {
+          await db.execute('ALTER TABLE $_table ADD COLUMN sgfHash TEXT');
+          await db.execute(
+            'CREATE INDEX idx_records_source_sgfHash ON $_table(source, sgfHash)',
+          );
+          final List<Map<String, Object?>> rows = await db.query(
+            _table,
+            columns: <String>['id', 'sgf'],
+          );
+          final Batch batch = db.batch();
+          for (final Map<String, Object?> row in rows) {
+            final String? id = row['id'] as String?;
+            final String? sgf = row['sgf'] as String?;
+            if (id == null || sgf == null || sgf.trim().isEmpty) {
+              continue;
+            }
+            batch.update(
+              _table,
+              <String, Object?>{'sgfHash': _hashSgf(sgf)},
+              where: 'id = ?',
+              whereArgs: <Object?>[id],
+            );
+          }
+          await batch.commit(noResult: true);
+        }
       },
     );
     return _db!;
@@ -122,9 +157,11 @@ class GameRecordRepository {
 
   Future<void> upsert(GameRecord record) async {
     final Database db = await _database();
+    final Map<String, Object?> row = record.toMap();
+    row['sgfHash'] = _hashSgf(record.sgf);
     await db.insert(
       _table,
-      record.toMap(),
+      row,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -164,14 +201,19 @@ class GameRecordRepository {
   Future<GameRecord?> findImportBySgfContent(String sgfContent) async {
     final String normalized = sgfContent.trim();
     if (normalized.isEmpty) return null;
-    final List<GameRecord> list = <GameRecord>[
-      ...await listBySource('download', limit: 500),
-      ...await listBySource('import', limit: 500),
-    ];
-    for (final GameRecord r in list) {
-      if (r.sgf.trim() == normalized) return r;
+    final Database db = await _database();
+    final String hash = _hashSgf(normalized);
+    final List<Map<String, Object?>> rows = await db.query(
+      _table,
+      where: 'source IN (?, ?) AND sgfHash = ?',
+      whereArgs: <Object?>['download', 'import', hash],
+      orderBy: 'updatedAtMs DESC',
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      return null;
     }
-    return null;
+    return GameRecord.fromMap(rows.first);
   }
 
   Future<GameRecord?> loadById(String id) async {
@@ -234,5 +276,10 @@ class GameRecordRepository {
       updatedAtMs: now,
     );
     await upsert(record);
+  }
+
+  String _hashSgf(String sgf) {
+    final String normalized = sgf.trim();
+    return sha256.convert(utf8.encode(normalized)).toString();
   }
 }
