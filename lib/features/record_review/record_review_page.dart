@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Directory, File, Platform;
+import 'dart:math' show max;
 
 import 'package:external_path/external_path.dart';
 import 'package:path/path.dart' as p;
@@ -162,13 +163,13 @@ class RecordReviewPage extends StatefulWidget {
   State<RecordReviewPage> createState() => _RecordReviewPageState();
 }
 
-/// 配置未加载时的复盘分析兜底（与 ai_profiles 挑战档一致）。
+/// 配置未加载时的复盘分析兜底（与 ai_profiles 挑战档一致，思考 20s 避免 iOS 超时）。
 const AnalysisProfile _fallbackReviewProfile = AnalysisProfile(
   id: 'review-fallback',
   name: '挑战',
   description: '复盘分析',
   maxVisits: 50,
-  thinkingTimeMs: 400,
+  thinkingTimeMs: 20000,
   includeOwnership: false,
 );
 
@@ -1252,13 +1253,20 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     final StoneColor gameStartingPlayer = _sgf!.initialBlackStones.isNotEmpty
         ? StoneColor.white
         : StoneColor.black;
+    /// 复盘局势分析：思考 10s 与对局一致，避免 iOS 超时。
     final AnalysisProfile ownershipProfile = AnalysisProfile(
       id: '${_analysisProfile.id}-ownership-fast',
       name: _analysisProfile.name,
       description: _analysisProfile.description,
       maxVisits: 20,
-      thinkingTimeMs: 1000,
+      thinkingTimeMs: 10000,
       includeOwnership: true,
+    );
+    final AnalysisProfile reviewProfile =
+        _isThirdPartyRecord ? _thirdPartyAnalysisProfile : _analysisProfile;
+    final int timeoutMs = max(
+      _timeoutMsForReviewProfile(ownershipProfile),
+      _timeoutMsForReviewProfile(reviewProfile),
     );
     return _katagoAdapter.analyze(
       KatagoAnalyzeRequest(
@@ -1272,7 +1280,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         rules: preset.toGameRules(komi: komi),
         profile: ownershipProfile,
         includeOwnership: true,
-        timeoutMs: _isThirdPartyRecord ? 60000 : _timeoutMsForReviewProfile(_analysisProfile),
+        timeoutMs: timeoutMs,
       ),
     );
   }

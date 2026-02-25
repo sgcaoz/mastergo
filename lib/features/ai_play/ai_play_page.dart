@@ -447,6 +447,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
   }
 
   /// 前几步快速开局：手数 < 6 用 20，< 24 用 50，与难度档位（快速 20 / 挑战 50）对应。
+  /// 开局思考时间至少 10s，避免 iOS 等设备上「刚开局就超时」（原 1s 太短）。
   AnalysisProfile _effectiveProfileForTurn(int moveCount) {
     final AnalysisProfile p = widget.profile;
     if (p.maxVisits <= 20) {
@@ -466,7 +467,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
       name: p.name,
       description: p.description,
       maxVisits: effectiveVisits,
-      thinkingTimeMs: min(p.thinkingTimeMs, 1000),
+      thinkingTimeMs: min(p.thinkingTimeMs, 10000),
       includeOwnership: p.includeOwnership,
     );
   }
@@ -1760,16 +1761,16 @@ class _AIBattlePageState extends State<_AIBattlePage>
         .toList();
     final AnalysisProfile profile =
         _effectiveProfileForTurn(state.moves.length);
-    // 局势分析：固定较低 visits 保证可用性，超时放宽以免专业/大师档设备上超时。
+    // 局势分析：快速档 10s 思考，超时 = 2×（与原则一致）。
     final AnalysisProfile ownershipProfile = AnalysisProfile(
       id: '${profile.id}-ownership-fast',
       name: profile.name,
       description: profile.description,
       maxVisits: 20,
-      thinkingTimeMs: 1000,
+      thinkingTimeMs: 10000,
       includeOwnership: true,
     );
-    final int timeoutMs = max(_timeoutBudgetMsForProfile(ownershipProfile), 60000);
+    final int timeoutMs = _timeoutBudgetMsForProfile(ownershipProfile);
     return widget.adapter.analyze(
       KatagoAnalyzeRequest(
         queryId: 'ownership-${DateTime.now().millisecondsSinceEpoch}',

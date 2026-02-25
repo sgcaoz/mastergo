@@ -26,12 +26,13 @@ class PhotoJudgePage extends StatefulWidget {
 class _PhotoJudgePageState extends State<PhotoJudgePage> {
   final ImagePicker _picker = ImagePicker();
   final KatagoAdapter _adapter = PlatformKatagoAdapter();
+  /// 拍照分析用快速档时间：10s 思考，超时 2×=20s（与原则一致）。
   static const AnalysisProfile _analysisProfile = AnalysisProfile(
     id: 'photo-judge',
     name: 'photo-judge',
     description: 'light-analysis',
     maxVisits: 2,
-    thinkingTimeMs: 400,
+    thinkingTimeMs: 10000,
     includeOwnership: true,
   );
   /// 用 ownership 判断终局：必须所有点 |ownership| 都大于此阈值才是终局。
@@ -258,7 +259,7 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
           rules: preset.toGameRules(),
           profile: _analysisProfile,
           includeOwnership: true,
-          timeoutMs: 60000,
+          timeoutMs: 20000,
         ),
       );
       final double blackWin = res.winrate.clamp(0.0, 1.0);

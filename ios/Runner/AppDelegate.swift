@@ -110,6 +110,26 @@ import Darwin
     }
   }
 
+  /// Resolve Flutter asset to a real file path. Assets live under App.framework/flutter_assets/ (release) or in bundle (debug).
+  private func pathForFlutterAsset(assetPath: String) -> String? {
+    let key = FlutterDartProject.lookupKey(forAsset: assetPath)
+    if let p = Bundle.main.path(forResource: key, ofType: nil) {
+      return p
+    }
+    let bundlePath = Bundle.main.bundlePath
+    let fs = bundlePath as NSString
+    let candidates = [
+      fs.appendingPathComponent("Frameworks/App.framework/flutter_assets").appending("/").appending(assetPath),
+      (fs.appendingPathComponent("flutter_assets") as NSString).appendingPathComponent(assetPath),
+    ]
+    for fullPath in candidates {
+      if FileManager.default.fileExists(atPath: fullPath) {
+        return fullPath
+      }
+    }
+    return nil
+  }
+
   private func prepareModel(call: FlutterMethodCall, result: @escaping FlutterResult) {
     guard
       let args = call.arguments as? [String: Any],
@@ -120,13 +140,12 @@ import Darwin
     }
 
     let expectedSha = (args["modelSha256"] as? String)?.lowercased()
-    let assetKey = FlutterDartProject.lookupKey(forAsset: modelAssetPath)
-    guard let assetFilePath = Bundle.main.path(forResource: assetKey, ofType: nil) else {
+    guard let assetFilePath = pathForFlutterAsset(assetPath: modelAssetPath) else {
       result(
         FlutterError(
           code: "MODEL_ASSET_NOT_FOUND",
           message: "Asset not found: \(modelAssetPath)",
-          details: ["lookupKey": assetKey]
+          details: nil
         )
       )
       return
@@ -250,6 +269,7 @@ import Darwin
       "boardYSize": boardSize,
       "initialPlayer": initialPlayer,
       "maxVisits": maxVisits,
+      "maxTime": Double(thinkingTimeMs) / 1000.0,
       "moves": parseTokenArray(tokens: moves),
       "initialStones": parseTokenArray(tokens: initialStones),
     ]
@@ -259,7 +279,7 @@ import Darwin
       let data = try JSONSerialization.data(withJSONObject: payload)
       try writeLineToEngine(data: data)
 
-      let timeoutMs = timeoutOverrideMs ?? max(8000, thinkingTimeMs * 6)
+      let timeoutMs = timeoutOverrideMs ?? (thinkingTimeMs * 2)
       guard let response = readJsonResponse(queryId: queryId, timeoutMs: timeoutMs) else {
         if !isProcessAlive() {
           result(FlutterError(code: "ENGINE_DIED", message: "KataGo process exited during analysis", details: nil))
@@ -349,12 +369,11 @@ import Darwin
     relativeDir: String,
     forceExecutable: Bool = false
   ) throws -> URL {
-    let assetKey = FlutterDartProject.lookupKey(forAsset: assetPath)
-    guard let assetFilePath = Bundle.main.path(forResource: assetKey, ofType: nil) else {
+    guard let assetFilePath = pathForFlutterAsset(assetPath: assetPath) else {
       throw NSError(
         domain: "mastergo.katago",
         code: 2001,
-        userInfo: [NSLocalizedDescriptionKey: "Asset not found: \(assetPath) (lookupKey=\(assetKey))"]
+        userInfo: [NSLocalizedDescriptionKey: "Asset not found: \(assetPath)"]
       )
     }
 
