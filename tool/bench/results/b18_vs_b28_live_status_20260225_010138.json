@@ -1,0 +1,12 @@
+{
+  "game": 1,
+  "black": "b28_v2",
+  "white": "b18_v10",
+  "move_no": 3,
+  "player": "b28_v2",
+  "player_total_ms": 639.076,
+  "move": "Q16",
+  "self_winrate_pct": 0.8,
+  "opponent_self_winrate_pct": 40.845,
+  "timestamp": "2026-02-25T01:01:44"
+}

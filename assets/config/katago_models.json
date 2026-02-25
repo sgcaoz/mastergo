@@ -3,14 +3,14 @@
   "models": [
     {
       "id": "standard",
-      "name": "KataGo Standard",
+      "name": "KataGo B18",
       "engineFamily": "kata1",
       "tier": "standard",
       "assetPath": "assets/models/katago/standard.bin.gz",
-      "networkName": "kata1-b28c512nbt-s12192929536-d5655876072",
-      "sourceUrl": "https://media.katagotraining.org/uploaded/networks/models/kata1/kata1-b28c512nbt-s12192929536-d5655876072.bin.gz",
-      "sha256": "6d62321defca9e2d3bd768379d77a817915125781886b83f73782c984b732d99",
-      "notes": "Strongest confidently-rated network at installation time."
+      "networkName": "kata1-b18c384nbt-s9996604416-d4316597426",
+      "sourceUrl": "https://media.katagotraining.org/uploaded/networks/models/kata1/kata1-b18c384nbt-s9996604416-d4316597426.bin.gz",
+      "sha256": "9d7a6afed8ff5b74894727e156f04f0cd36060a24824892008fbb6e0cba51f1d",
+      "notes": "B18 384 blocks, single bundle, under 200MB."
     }
   ]
 }

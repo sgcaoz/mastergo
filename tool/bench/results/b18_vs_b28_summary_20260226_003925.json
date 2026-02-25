@@ -1,0 +1,243 @@
+{
+  "config": {
+    "board_size": 19,
+    "komi": 6.5,
+    "games": 10,
+    "black_assignment": "b28 first 5 games, b18 next 5 games",
+    "models": {
+      "b28_v2": {
+        "path": "/Users/caozheng/mastergo/android/katagomodel/src/main/assets/models/katago/standard.bin.gz",
+        "visits": 2
+      },
+      "b18_v10": {
+        "path": "/Users/caozheng/mastergo/tool/bench/models/kata1-b18c384nbt-s9996604416-d4316597426.bin.gz",
+        "visits": 2
+      }
+    },
+    "perturbation": {
+      "enabled": true,
+      "global_seed": 1772037565,
+      "move_temperature_min": 0.2,
+      "move_temperature_max": 0.6
+    }
+  },
+  "games": [
+    {
+      "game": 1,
+      "black": "b28_v2",
+      "white": "b18_v10",
+      "winner": "b28_v2",
+      "reason": "resign",
+      "moves": 100,
+      "avg_ms_black": 345.895,
+      "avg_ms_white": 142.473,
+      "perturbation": {
+        "b28_v2": {
+          "seed": 1491432881,
+          "chosen_move_temperature": 0.3147
+        },
+        "b18_v10": {
+          "seed": 2125847837,
+          "chosen_move_temperature": 0.5147
+        }
+      }
+    },
+    {
+      "game": 2,
+      "black": "b28_v2",
+      "white": "b18_v10",
+      "winner": "b28_v2",
+      "reason": "resign",
+      "moves": 102,
+      "avg_ms_black": 347.482,
+      "avg_ms_white": 143.674,
+      "perturbation": {
+        "b28_v2": {
+          "seed": 1369737934,
+          "chosen_move_temperature": 0.5826
+        },
+        "b18_v10": {
+          "seed": 1679284792,
+          "chosen_move_temperature": 0.4636
+        }
+      }
+    },
+    {
+      "game": 3,
+      "black": "b28_v2",
+      "white": "b18_v10",
+      "winner": "b28_v2",
+      "reason": "resign",
+      "moves": 100,
+      "avg_ms_black": 354.111,
+      "avg_ms_white": 145.183,
+      "perturbation": {
+        "b28_v2": {
+          "seed": 321816770,
+          "chosen_move_temperature": 0.5764
+        },
+        "b18_v10": {
+          "seed": 1571080634,
+          "chosen_move_temperature": 0.2344
+        }
+      }
+    },
+    {
+      "game": 4,
+      "black": "b28_v2",
+      "white": "b18_v10",
+      "winner": "b28_v2",
+      "reason": "resign",
+      "moves": 102,
+      "avg_ms_black": 383.585,
+      "avg_ms_white": 160.349,
+      "perturbation": {
+        "b28_v2": {
+          "seed": 2046625570,
+          "chosen_move_temperature": 0.3477
+        },
+        "b18_v10": {
+          "seed": 941064889,
+          "chosen_move_temperature": 0.2267
+        }
+      }
+    },
+    {
+      "game": 5,
+      "black": "b28_v2",
+      "white": "b18_v10",
+      "winner": "b28_v2",
+      "reason": "resign",
+      "moves": 102,
+      "avg_ms_black": 355.988,
+      "avg_ms_white": 147.88,
+      "perturbation": {
+        "b28_v2": {
+          "seed": 2049016463,
+          "chosen_move_temperature": 0.5656
+        },
+        "b18_v10": {
+          "seed": 2131251939,
+          "chosen_move_temperature": 0.2448
+        }
+      }
+    },
+    {
+      "game": 6,
+      "black": "b18_v10",
+      "white": "b28_v2",
+      "winner": "b18_v10",
+      "reason": "auto_resign_below_3pct_after_50",
+      "moves": 118,
+      "avg_ms_black": 158.783,
+      "avg_ms_white": 366.775,
+      "perturbation": {
+        "b28_v2": {
+          "seed": 298217808,
+          "chosen_move_temperature": 0.5937
+        },
+        "b18_v10": {
+          "seed": 1596945374,
+          "chosen_move_temperature": 0.355
+        }
+      }
+    },
+    {
+      "game": 7,
+      "black": "b18_v10",
+      "white": "b28_v2",
+      "winner": "b18_v10",
+      "reason": "auto_resign_below_3pct_after_50",
+      "moves": 118,
+      "avg_ms_black": 179.036,
+      "avg_ms_white": 480.648,
+      "perturbation": {
+        "b28_v2": {
+          "seed": 559491867,
+          "chosen_move_temperature": 0.3305
+        },
+        "b18_v10": {
+          "seed": 277422077,
+          "chosen_move_temperature": 0.2676
+        }
+      }
+    },
+    {
+      "game": 8,
+      "black": "b18_v10",
+      "white": "b28_v2",
+      "winner": "b18_v10",
+      "reason": "auto_resign_below_3pct_after_50",
+      "moves": 118,
+      "avg_ms_black": 256.625,
+      "avg_ms_white": 686.818,
+      "perturbation": {
+        "b28_v2": {
+          "seed": 1515164247,
+          "chosen_move_temperature": 0.2858
+        },
+        "b18_v10": {
+          "seed": 948086420,
+          "chosen_move_temperature": 0.2412
+        }
+      }
+    },
+    {
+      "game": 9,
+      "black": "b18_v10",
+      "white": "b28_v2",
+      "winner": "b18_v10",
+      "reason": "auto_resign_below_3pct_after_50",
+      "moves": 118,
+      "avg_ms_black": 178.67,
+      "avg_ms_white": 415.996,
+      "perturbation": {
+        "b28_v2": {
+          "seed": 694307301,
+          "chosen_move_temperature": 0.5811
+        },
+        "b18_v10": {
+          "seed": 1695514015,
+          "chosen_move_temperature": 0.5258
+        }
+      }
+    },
+    {
+      "game": 10,
+      "black": "b18_v10",
+      "white": "b28_v2",
+      "winner": "b18_v10",
+      "reason": "auto_resign_below_3pct_after_50",
+      "moves": 118,
+      "avg_ms_black": 188.671,
+      "avg_ms_white": 468.544,
+      "perturbation": {
+        "b28_v2": {
+          "seed": 2038874732,
+          "chosen_move_temperature": 0.3747
+        },
+        "b18_v10": {
+          "seed": 1958102178,
+          "chosen_move_temperature": 0.2297
+        }
+      }
+    }
+  ],
+  "totals": {
+    "b28_v2": {
+      "wins": 5,
+      "moves": 548,
+      "avg_move_ms": 425.453
+    },
+    "b18_v10": {
+      "wins": 5,
+      "moves": 548,
+      "avg_move_ms": 171.852
+    }
+  },
+  "files": {
+    "moves_csv": "/Users/caozheng/mastergo/tool/bench/results/b18_vs_b28_moves_20260226_003925.csv",
+    "summary_json": "/Users/caozheng/mastergo/tool/bench/results/b18_vs_b28_summary_20260226_003925.json",
+    "live_status_json": "/Users/caozheng/mastergo/tool/bench/results/b18_vs_b28_live_status_20260226_003925.json"
+  }
+}

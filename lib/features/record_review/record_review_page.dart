@@ -6,6 +6,7 @@ import 'package:external_path/external_path.dart';
 import 'package:path/path.dart' as p;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:mastergo/app/app_i18n.dart';
@@ -21,6 +22,7 @@ import 'package:mastergo/features/ai_play/ai_play_page.dart';
 import 'package:mastergo/domain/sgf/sgf_parser.dart';
 import 'package:mastergo/features/common/ownership_result_sheet.dart';
 import 'package:mastergo/features/common/review_board_panel.dart';
+import 'package:mastergo/infra/config/ai_profile_repository.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
 import 'package:mastergo/infra/sound/stone_sound.dart';
 import 'package:mastergo/infra/storage/game_record_repository.dart';
@@ -160,41 +162,43 @@ class RecordReviewPage extends StatefulWidget {
   State<RecordReviewPage> createState() => _RecordReviewPageState();
 }
 
+/// 配置未加载时的复盘分析兜底（与 ai_profiles 挑战档一致）。
+const AnalysisProfile _fallbackReviewProfile = AnalysisProfile(
+  id: 'review-fallback',
+  name: '挑战',
+  description: '复盘分析',
+  maxVisits: 50,
+  thinkingTimeMs: 400,
+  includeOwnership: false,
+);
+
 class _RecordReviewPageState extends State<RecordReviewPage> {
   final SgfParser _sgfParser = const SgfParser();
   final KatagoAdapter _katagoAdapter = PlatformKatagoAdapter();
   final GameAnalysisService _analysisService = const GameAnalysisService();
   final GameRecordRepository _recordRepository = GameRecordRepository();
+  final AIProfileRepository _profileRepository = AIProfileRepository();
   final TextEditingController _komiController = TextEditingController(
     text: '6.5',
   );
   final TextEditingController _urlController = TextEditingController();
-  final AnalysisProfile _analysisProfile = const AnalysisProfile(
-    id: 'review-default',
-    name: '复盘分析',
-    description: '逐手胜率',
-    maxVisits: 120,
-    thinkingTimeMs: 1000,
-    includeOwnership: false,
-  );
-  final AnalysisProfile _thirdPartyAnalysisProfile = const AnalysisProfile(
-    id: 'review-fast-third-party',
-    name: '第三方复盘',
-    description: '低参数逐手胜率',
-    maxVisits: 10,
-    thinkingTimeMs: 400,
-    includeOwnership: false,
-  );
-  /// 分析当前胜率默认用低 visits，避免超时；若对局/复盘选了更高参数可在此覆盖。
-  static const int _defaultCurrentWinrateVisits = 5;
-  final AnalysisProfile _currentWinrateProfile = const AnalysisProfile(
-    id: 'review-current-winrate',
-    name: '当前胜率',
-    description: '单点分析',
-    maxVisits: _defaultCurrentWinrateVisits,
-    thinkingTimeMs: 500,
-    includeOwnership: false,
-  );
+
+  /// 从 ai_profiles.json 加载的档位；未加载完或为空时用 _fallbackReviewProfile。
+  List<AnalysisProfile> _reviewProfiles = <AnalysisProfile>[];
+  /// 当前选中的档位下标，默认 1（挑战）。
+  int _reviewProfileIndex = 1;
+
+  AnalysisProfile get _analysisProfile =>
+      _reviewProfiles.isNotEmpty
+          ? _reviewProfiles[_reviewProfileIndex.clamp(0, _reviewProfiles.length - 1)]
+          : _fallbackReviewProfile;
+
+  /// 第三方/名局等复盘用快速档（首档）。
+  AnalysisProfile get _thirdPartyAnalysisProfile =>
+      _reviewProfiles.isNotEmpty ? _reviewProfiles[0] : _fallbackReviewProfile;
+
+  /// 分析当前胜率与提示共用选中的档位。
+  AnalysisProfile get _currentWinrateProfile => _analysisProfile;
 
   String _ruleset = 'chinese';
   SgfGame? _sgf;
@@ -752,6 +756,18 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       );
     }
     unawaited(_loadInitialRecordWinrates());
+    unawaited(_loadReviewProfiles());
+  }
+
+  Future<void> _loadReviewProfiles() async {
+    try {
+      final List<AnalysisProfile> list = await _profileRepository.loadProfiles();
+      if (!mounted) return;
+      setState(() {
+        _reviewProfiles = list;
+        _reviewProfileIndex = _reviewProfileIndex.clamp(0, list.isEmpty ? 0 : list.length - 1);
+      });
+    } catch (_) {}
   }
 
   @override
@@ -1082,18 +1098,22 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   /// 可选：若本谱来自对局且保存了更高 visits，分析当前胜率时可沿用并延长超时。
   AnalysisProfile? _gameAnalysisProfile;
 
-  /// 分析当前胜率：默认 maxVisits=5；仅当对局传入了更高 visits 时用对局参数，超时随 visits 延长。
+  /// 分析当前胜率：对局传入的 profile 优先，否则用当前选中的复盘档位。
   AnalysisProfile _profileForCurrentWinrate() {
-    if (_gameAnalysisProfile != null &&
-        _gameAnalysisProfile!.maxVisits > _defaultCurrentWinrateVisits) {
+    if (_gameAnalysisProfile != null && _gameAnalysisProfile!.maxVisits > 0) {
       return _gameAnalysisProfile!;
     }
     return _currentWinrateProfile;
   }
 
-  /// 超时随 visits 延长，避免默认 8s 导致分析当前胜率失败。
+  /// 读取超时 = 建议思考时间的两倍（与对局一致）。
   int _timeoutMsForCurrentWinrate(AnalysisProfile profile) {
-    return (profile.maxVisits * 800).clamp(15000, 90000);
+    return profile.thinkingTimeMs * 2;
+  }
+
+  /// 打谱提示/局势分析：读取超时 = 建议思考时间的两倍。
+  int _timeoutMsForReviewProfile(AnalysisProfile profile) {
+    return profile.thinkingTimeMs * 2;
   }
 
   Future<void> _analyzeCurrentWinrate() async {
@@ -1152,6 +1172,17 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       setState(() {
         _winrates.addAll(data);
         _status = _t(zh: '分析完成', en: 'Analysis complete', ja: '解析完了', ko: '분석 완료');
+      });
+    } on PlatformException catch (e) {
+      setState(() {
+        _status = e.code == 'ENGINE_TIMEOUT'
+            ? _t(
+                zh: '分析超时，请选择较低难度或使用性能更好的设备',
+                en: 'Analysis timed out. Try a lower difficulty or use a faster device.',
+                ja: '解析がタイムアウトしました。難易度を下げるか、性能の良い端末をお試しください。',
+                ko: '분석 시간 초과. 난이도를 낮추거나 성능이 좋은 기기를 사용해 보세요.',
+              )
+            : '${_t(zh: '分析失败', en: 'Analysis failed', ja: '解析失敗', ko: '분석 실패')}: ${e.message ?? e.code}';
       });
     } catch (e) {
       setState(() {
@@ -1241,7 +1272,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         rules: preset.toGameRules(komi: komi),
         profile: ownershipProfile,
         includeOwnership: true,
-        timeoutMs: _isThirdPartyRecord ? 60000 : 30000,
+        timeoutMs: _isThirdPartyRecord ? 60000 : _timeoutMsForReviewProfile(_analysisProfile),
       ),
     );
   }
@@ -1259,6 +1290,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     final StoneColor gameStartingPlayer = _sgf!.initialBlackStones.isNotEmpty
         ? StoneColor.white
         : StoneColor.black;
+    final AnalysisProfile hintProfile =
+        _isThirdPartyRecord ? _thirdPartyAnalysisProfile : _analysisProfile;
+    final int timeoutMs = _timeoutMsForReviewProfile(hintProfile);
     final KatagoAnalyzeResult analyzed = await _katagoAdapter.analyze(
       KatagoAnalyzeRequest(
         queryId: 'review-hint-${DateTime.now().millisecondsSinceEpoch}',
@@ -1268,7 +1302,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           startingPlayer: gameStartingPlayer,
         ),
         rules: preset.toGameRules(komi: komi),
-        profile: _isThirdPartyRecord ? _thirdPartyAnalysisProfile : _analysisProfile,
+        profile: hintProfile,
+        timeoutMs: timeoutMs,
       ),
     );
     final List<String> raw = analyzed.topMoves.isNotEmpty
@@ -1548,9 +1583,59 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
               labelText: _t(zh: '贴目', en: 'Komi', ja: 'コミ', ko: '덤'),
             ),
           ),
+          if (_reviewProfiles.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              value: _reviewProfileIndex.clamp(0, _reviewProfiles.length - 1),
+              items: List<DropdownMenuItem<int>>.generate(
+                _reviewProfiles.length,
+                (int i) => DropdownMenuItem<int>(
+                  value: i,
+                  child: Text('${_reviewProfiles[i].name} (${_reviewProfiles[i].maxVisits})'),
+                ),
+              ),
+              onChanged: (int? value) {
+                if (value != null) setState(() => _reviewProfileIndex = value);
+              },
+              decoration: InputDecoration(
+                border: const OutlineInputBorder(),
+                labelText: _t(zh: '难度', en: 'Difficulty', ja: '難易度', ko: '난이도'),
+              ),
+            ),
+          ],
           const SizedBox(height: 20),
         ],
         if (_sgf != null && boardState != null) ...<Widget>[
+          if (compactReviewLayout && _reviewProfiles.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: <Widget>[
+                  Text(
+                    _t(zh: '难度:', en: 'Difficulty:', ja: '難易度:', ko: '난이도:'),
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  const SizedBox(width: 8),
+                  DropdownButton<int>(
+                    value: _reviewProfileIndex.clamp(0, _reviewProfiles.length - 1),
+                    isDense: true,
+                    items: List<DropdownMenuItem<int>>.generate(
+                      _reviewProfiles.length,
+                      (int i) => DropdownMenuItem<int>(
+                        value: i,
+                        child: Text(
+                          '${_reviewProfiles[i].name} (${_reviewProfiles[i].maxVisits})',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ),
+                    ),
+                    onChanged: (int? value) {
+                      if (value != null) setState(() => _reviewProfileIndex = value);
+                    },
+                  ),
+                ],
+              ),
+            ),
           ReviewBoardPanel(
             title: null, // 隐藏标题，头部已显示棋谱信息
             state: _reviewTryState ?? boardState,
@@ -1601,7 +1686,34 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
             },
             onRequestHint: () async {
               setState(() => _reviewHintLoading = true);
-              await _requestReviewHint(_reviewTryState ?? boardState);
+              try {
+                await _requestReviewHint(_reviewTryState ?? boardState);
+              } on PlatformException catch (e) {
+                if (!mounted) return;
+                final String msg = e.code == 'ENGINE_TIMEOUT'
+                    ? _t(
+                        zh: '分析超时，请选择较低难度或使用性能更好的设备',
+                        en: 'Analysis timed out. Try a lower difficulty or use a faster device.',
+                        ja: '解析がタイムアウトしました。難易度を下げるか、性能の良い端末をお試しください。',
+                        ko: '분석 시간 초과. 난이도를 낮추거나 성능이 좋은 기기를 사용해 보세요.',
+                      )
+                    : '${_t(zh: '提示失败', en: 'Hint failed', ja: '候補手取得失敗', ko: '추천 수 실패')}: ${e.message ?? e.code}';
+                setState(() {
+                  _reviewHintPoints = <GoPoint>[];
+                  _status = msg;
+                });
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+              } catch (e) {
+                if (mounted) {
+                  setState(() {
+                    _reviewHintPoints = <GoPoint>[];
+                    _status = '${_t(zh: '提示失败', en: 'Hint failed', ja: '候補手取得失敗', ko: '추천 수 실패')}: $e';
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('${_t(zh: '提示失败', en: 'Hint failed', ja: '候補手取得失敗', ko: '추천 수 실패')}: $e')),
+                  );
+                }
+              }
               if (mounted) setState(() => _reviewHintLoading = false);
             },
             onRequestOwnership: () async {
@@ -1613,6 +1725,19 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                 if (!mounted) return;
                 setState(() => _reviewOwnershipLoading = false);
                 showOwnershipResultSheet(context, state, res);
+              } on PlatformException catch (e) {
+                if (mounted) {
+                  setState(() => _reviewOwnershipLoading = false);
+                  final String msg = e.code == 'ENGINE_TIMEOUT'
+                      ? _t(
+                          zh: '分析超时，请选择较低难度或使用性能更好的设备',
+                          en: 'Analysis timed out. Try a lower difficulty or use a faster device.',
+                          ja: '解析がタイムアウトしました。難易度を下げるか、性能の良い端末をお試しください。',
+                          ko: '분석 시간 초과. 난이도를 낮추거나 성능이 좋은 기기를 사용해 보세요.',
+                        )
+                      : '${_t(zh: '局势分析失败', en: 'Position analysis failed', ja: '局勢解析失敗', ko: '형세 분석 실패')}: ${e.message ?? e.code}';
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+                }
               } catch (e) {
                 if (mounted) {
                   setState(() => _reviewOwnershipLoading = false);

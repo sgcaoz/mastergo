@@ -309,9 +309,7 @@ class _AIPlayPageState extends State<AIPlayPage> {
                 ),
                 const SizedBox(height: 8),
                 FilledButton.icon(
-                  onPressed: selected == null
-                      ? null
-                      : () => _startBattle(selected),
+                  onPressed: selected == null ? null : () => _startBattle(selected),
                   icon: const Icon(Icons.play_arrow),
                   label: Text(
                     _s.pick(
@@ -443,28 +441,22 @@ class _AIBattlePageState extends State<_AIBattlePage>
     return _timeoutBudgetMsForProfile(widget.profile);
   }
 
+  /// 读取超时 = 建议思考时间的两倍（引擎 maxTime 已用 thinkingTimeMs，此处为 App 等待上限）。
   int _timeoutBudgetMsForProfile(AnalysisProfile profile) {
-    if (profile.maxVisits >= 60 || profile.id == 'master') {
-      return max(120000, profile.thinkingTimeMs * 24);
-    }
-    return max(
-      12000,
-      max(profile.thinkingTimeMs * 10, profile.maxVisits * 900),
-    );
+    return profile.thinkingTimeMs * 2;
   }
 
+  /// 前几步快速开局：手数 < 6 用 20，< 24 用 50，与难度档位（快速 20 / 挑战 50）对应。
   AnalysisProfile _effectiveProfileForTurn(int moveCount) {
     final AnalysisProfile p = widget.profile;
-    if (p.maxVisits < 30) {
+    if (p.maxVisits <= 20) {
       return p;
     }
     int effectiveVisits = p.maxVisits;
     if (moveCount < 6) {
-      effectiveVisits = min(effectiveVisits, 10);
-    } else if (moveCount < 14) {
       effectiveVisits = min(effectiveVisits, 20);
     } else if (moveCount < 24) {
-      effectiveVisits = min(effectiveVisits, 30);
+      effectiveVisits = min(effectiveVisits, 50);
     }
     if (effectiveVisits == p.maxVisits) {
       return p;
@@ -901,10 +893,19 @@ class _AIBattlePageState extends State<_AIBattlePage>
       unawaited(_persistSession());
       _maybeFinishGame();
     } on PlatformException catch (e) {
-      final String details = e.details?.toString() ?? '';
       setState(() {
-        _status =
-            '${_t(zh: 'AI分析失败', en: 'AI analysis failed', ja: 'AI解析失敗', ko: 'AI 분석 실패')}: [${e.code}] ${e.message ?? ''} ${details.isEmpty ? '' : '| $details'}';
+        if (e.code == 'ENGINE_TIMEOUT') {
+          _status = _t(
+            zh: '分析超时，请选择较低难度或使用性能更好的设备',
+            en: 'Analysis timed out. Try a lower difficulty or use a faster device.',
+            ja: '解析がタイムアウトしました。難易度を下げるか、性能の良い端末をお試しください。',
+            ko: '분석 시간 초과. 난이도를 낮추거나 성능이 좋은 기기를 사용해 보세요.',
+          );
+        } else {
+          final String details = e.details?.toString() ?? '';
+          _status =
+              '${_t(zh: 'AI分析失败', en: 'AI analysis failed', ja: 'AI解析失敗', ko: 'AI 분석 실패')}: [${e.code}] ${e.message ?? ''} ${details.isEmpty ? '' : '| $details'}';
+        }
       });
     } finally {
       if (mounted) {
@@ -1002,6 +1003,27 @@ class _AIBattlePageState extends State<_AIBattlePage>
           _finalScore = score ?? _game!.scoreByRules(_rules);
           _finalResultTextFromAnalysis = resultText;
           _status = '${_t(zh: '终局', en: 'Game over', ja: '終局', ko: '종국')}: $resultText';
+        });
+        unawaited(_persistSession());
+      }
+    } on PlatformException catch (e) {
+      if (mounted) {
+        setState(() {
+          _finalScore = _game!.scoreByRules(_rules);
+          _finalResultTextFromAnalysis = null;
+          _status = e.code == 'ENGINE_TIMEOUT'
+              ? _t(
+                  zh: '分析超时，请选择较低难度或使用性能更好的设备',
+                  en: 'Analysis timed out. Try a lower difficulty or use a faster device.',
+                  ja: '解析がタイムアウトしました。難易度を下げるか、性能の良い端末をお試しください。',
+                  ko: '분석 시간 초과. 난이도를 낮추거나 성능이 좋은 기기를 사용해 보세요.',
+                )
+              : _t(
+                  zh: '终局: 分析失败（仅显示数目）',
+                  en: 'Game over: analysis failed (count only)',
+                  ja: '終局: 解析失敗（目数のみ）',
+                  ko: '종국: 분석 실패(집계만)',
+                );
         });
         unawaited(_persistSession());
       }
@@ -1606,6 +1628,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
               'B:${GoMove(player: GoStone.black, point: p).toGtp(widget.boardSize)}',
         )
         .toList();
+    // 提示与当前对局难度一致，直接使用 widget.profile（快速=20 / 挑战=50 / 专业=150 / 大师=500）
     final KatagoAnalyzeResult analyzed = await widget.adapter.analyze(
       KatagoAnalyzeRequest(
         queryId: 'hint-${DateTime.now().millisecondsSinceEpoch}',
@@ -1618,14 +1641,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
               : StoneColor.white,
         ),
         rules: _rules,
-        profile: AnalysisProfile(
-          id: '${widget.profile.id}-hint',
-          name: widget.profile.name,
-          description: widget.profile.description,
-          maxVisits: max(10, widget.profile.maxVisits),
-          thinkingTimeMs: widget.profile.thinkingTimeMs,
-          includeOwnership: widget.profile.includeOwnership,
-        ),
+        profile: widget.profile,
         timeoutMs: _timeoutBudgetMs(),
       ),
     );
@@ -1710,10 +1726,20 @@ class _AIBattlePageState extends State<_AIBattlePage>
                 ko: '추천 수 표시 완료(${hints.length}개)',
               );
       });
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _status = e.code == 'ENGINE_TIMEOUT'
+            ? _t(
+                zh: '分析超时，请选择较低难度或使用性能更好的设备',
+                en: 'Analysis timed out. Try a lower difficulty or use a faster device.',
+                ja: '解析がタイムアウトしました。難易度を下げるか、性能の良い端末をお試しください。',
+                ko: '분석 시간 초과. 난이도를 낮추거나 성능이 좋은 기기를 사용해 보세요.',
+              )
+            : '${_t(zh: '提示失败', en: 'Hint failed', ja: '候補手取得失敗', ko: '추천 수 실패')}: ${e.message ?? e.code}';
+      });
     } catch (e) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
         _status =
             '${_t(zh: '提示失败', en: 'Hint failed', ja: '候補手取得失敗', ko: '추천 수 실패')}: $e';
@@ -1734,7 +1760,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
         .toList();
     final AnalysisProfile profile =
         _effectiveProfileForTurn(state.moves.length);
-    // 局势分析优先可用性：固定低 visits，避免复盘场景超时。
+    // 局势分析：固定较低 visits 保证可用性，超时放宽以免专业/大师档设备上超时。
     final AnalysisProfile ownershipProfile = AnalysisProfile(
       id: '${profile.id}-ownership-fast',
       name: profile.name,
@@ -1743,7 +1769,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
       thinkingTimeMs: 1000,
       includeOwnership: true,
     );
-    final int timeoutMs = max(_timeoutBudgetMsForProfile(ownershipProfile), 30000);
+    final int timeoutMs = max(_timeoutBudgetMsForProfile(ownershipProfile), 60000);
     return widget.adapter.analyze(
       KatagoAnalyzeRequest(
         queryId: 'ownership-${DateTime.now().millisecondsSinceEpoch}',
@@ -1803,10 +1829,20 @@ class _AIBattlePageState extends State<_AIBattlePage>
       }
       _showOwnershipResultSheet(context, state, res,
           lastMovePoint: _lastMovePoint());
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _status = e.code == 'ENGINE_TIMEOUT'
+            ? _t(
+                zh: '分析超时，请选择较低难度或使用性能更好的设备',
+                en: 'Analysis timed out. Try a lower difficulty or use a faster device.',
+                ja: '解析がタイムアウトしました。難易度を下げるか、性能の良い端末をお試しください。',
+                ko: '분석 시간 초과. 난이도를 낮추거나 성능이 좋은 기기를 사용해 보세요.',
+              )
+            : '${_t(zh: '局势分析失败', en: 'Position analysis failed', ja: '局勢解析失敗', ko: '형세 분석 실패')}: ${e.message ?? e.code}';
+      });
     } catch (e) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
         _status =
             '${_t(zh: '局势分析失败', en: 'Position analysis failed', ja: '局勢解析失敗', ko: '형세 분석 실패')}: $e';

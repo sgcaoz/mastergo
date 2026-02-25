@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:mastergo/domain/entities/analysis_profile.dart';
 import 'package:mastergo/domain/entities/game_rules.dart';
 import 'package:mastergo/domain/entities/game_setup.dart';
@@ -60,8 +61,26 @@ class KatagoMoveCandidate {
   final double blackWinrate;
 }
 
+class KatagoPreparationStatus {
+  const KatagoPreparationStatus({
+    required this.ready,
+    required this.downloading,
+    this.progress,
+    this.message,
+  });
+
+  final bool ready;
+  final bool downloading;
+  /// 0..1 when progress is known.
+  final double? progress;
+  final String? message;
+}
+
 abstract class KatagoAdapter {
   Future<void> ensureStarted();
+  Future<KatagoPreparationStatus> getPreparationStatus({
+    bool requestDownload = false,
+  });
   Future<KatagoAnalyzeResult> analyze(KatagoAnalyzeRequest request);
   Future<void> shutdown();
 }
@@ -81,10 +100,15 @@ class PlatformKatagoAdapter implements KatagoAdapter {
   @override
   Future<void> ensureStarted() async {
     if (_started) {
+      debugPrint('[MasterGo/KatagoAdapter] ensureStarted skipped: already started');
       return;
     }
 
     final KatagoModel model = await _modelRepository.loadDefaultModel();
+    debugPrint(
+      '[MasterGo/KatagoAdapter] ensureStarted begin model=${model.id} asset=${model.assetPath}',
+    );
+    // Model is bundled in app assets (single package); no on-demand pack download.
     final Map<dynamic, dynamic>? prepareResult = await _channel
         .invokeMapMethod<dynamic, dynamic>('prepareModel', <String, Object?>{
           'modelAssetPath': model.assetPath,
@@ -96,11 +120,13 @@ class PlatformKatagoAdapter implements KatagoAdapter {
 
     final String preparedModelPath =
         prepareResult['modelPath'] as String? ?? model.assetPath;
+    debugPrint('[MasterGo/KatagoAdapter] prepareModel path=$preparedModelPath');
 
     await _channel.invokeMethod<void>('startEngine', <String, Object?>{
       'modelPath': preparedModelPath,
       'configAssetPath': 'assets/config/katago_analysis.cfg',
     });
+    debugPrint('[MasterGo/KatagoAdapter] startEngine returned success');
 
     // Warm up once so the first real user query is not penalized by model cold start.
     await _channel
@@ -116,16 +142,32 @@ class PlatformKatagoAdapter implements KatagoAdapter {
           'modelId': model.id,
           'timeoutMs': 30000,
         });
+    debugPrint('[MasterGo/KatagoAdapter] warmup analyzeOnce completed');
 
     _activeModel = model;
     _started = true;
+    debugPrint('[MasterGo/KatagoAdapter] ensureStarted completed');
+  }
+
+  @override
+  Future<KatagoPreparationStatus> getPreparationStatus({
+    bool requestDownload = false,
+  }) async {
+    if (_started) {
+      return const KatagoPreparationStatus(ready: true, downloading: false);
+    }
+    // Single-bundle: model is in app assets; no pack download.
+    return const KatagoPreparationStatus(ready: true, downloading: false);
   }
 
   @override
   Future<KatagoAnalyzeResult> analyze(KatagoAnalyzeRequest request) async {
     try {
       return await _analyzeOnce(request);
-    } catch (_) {
+    } catch (e) {
+      if (e is PlatformException && e.code == 'ENGINE_TIMEOUT') {
+        rethrow;
+      }
       _started = false;
       await ensureStarted();
       return _analyzeOnce(request);
@@ -245,6 +287,13 @@ class PlatformKatagoAdapter implements KatagoAdapter {
 }
 
 class MockKatagoAdapter implements KatagoAdapter {
+  @override
+  Future<KatagoPreparationStatus> getPreparationStatus({
+    bool requestDownload = false,
+  }) async {
+    return const KatagoPreparationStatus(ready: true, downloading: false);
+  }
+
   @override
   Future<KatagoAnalyzeResult> analyze(KatagoAnalyzeRequest request) async {
     return KatagoAnalyzeResult(

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mastergo/app/app_i18n.dart';
 import 'package:mastergo/domain/entities/analysis_profile.dart';
@@ -323,6 +324,17 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
       if (mounted) {
         showOwnershipResultSheet(context, analysisState, res);
       }
+    } on PlatformException catch (e) {
+      setState(() {
+        _status = e.code == 'ENGINE_TIMEOUT'
+            ? _t(
+                zh: '分析超时，请选择较低难度或使用性能更好的设备',
+                en: 'Analysis timed out. Try a lower difficulty or use a faster device.',
+                ja: '解析がタイムアウトしました。難易度を下げるか、性能の良い端末をお試しください。',
+                ko: '분석 시간 초과. 난이도를 낮추거나 성능이 좋은 기기를 사용해 보세요.',
+              )
+            : '${_t(zh: '分析失败', en: 'Analysis failed', ja: '解析失敗', ko: '분석 실패')}: ${e.message ?? e.code}';
+      });
     } catch (e) {
       setState(() {
         _status = '${_t(zh: '分析失败', en: 'Analysis failed', ja: '解析失敗', ko: '분석 실패')}: $e';

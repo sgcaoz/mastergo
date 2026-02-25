@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
+import android.util.Log
 import io.flutter.FlutterInjector
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -23,6 +24,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class MainActivity : FlutterActivity() {
+    private val logTag = "MasterGo/KataGo"
 
     companion object {
         @Volatile
@@ -122,39 +124,70 @@ class MainActivity : FlutterActivity() {
     private fun prepareModel(call: MethodCall, result: MethodChannel.Result) {
         try {
             val modelAssetPath = call.argument<String>("modelAssetPath")
-                ?: return result.error("BAD_ARGS", "modelAssetPath is required", null)
+                ?: run {
+                    mainHandler.post { result.error("BAD_ARGS", "modelAssetPath is required", null) }
+                    return
+                }
             val modelSha256 = call.argument<String>("modelSha256")?.lowercase(Locale.US)
 
             val outputDir = File(filesDir, "katago/models").apply { mkdirs() }
             val outputFile = File(outputDir, modelAssetPath.substringAfterLast('/'))
+
+            // Skip copy if file already exists and hash matches (normal startup <10s after first run).
+            if (outputFile.exists()) {
+                val existingSha = sha256(outputFile)
+                if (modelSha256 == null || modelSha256 == existingSha.lowercase(Locale.US)) {
+                    mainHandler.post {
+                        result.success(
+                            mapOf(
+                                "modelPath" to outputFile.absolutePath,
+                                "sha256" to existingSha
+                            )
+                        )
+                    }
+                    return
+                }
+            }
+
             copyAssetToFile(modelAssetPath, outputFile)
 
             val actualSha = sha256(outputFile)
             if (modelSha256 != null && modelSha256 != actualSha.lowercase(Locale.US)) {
-                return result.error(
-                    "MODEL_HASH_MISMATCH",
-                    "Expected sha256=$modelSha256 but got $actualSha",
-                    null
-                )
+                mainHandler.post {
+                    result.error(
+                        "MODEL_HASH_MISMATCH",
+                        "Expected sha256=$modelSha256 but got $actualSha",
+                        null
+                    )
+                }
+                return
             }
 
-            result.success(
-                mapOf(
-                    "modelPath" to outputFile.absolutePath,
-                    "sha256" to actualSha
+            mainHandler.post {
+                result.success(
+                    mapOf(
+                        "modelPath" to outputFile.absolutePath,
+                        "sha256" to actualSha
+                    )
                 )
-            )
+            }
         } catch (e: Exception) {
-            result.error("PREPARE_MODEL_FAILED", e.message, null)
+            mainHandler.post { result.error("PREPARE_MODEL_FAILED", e.message, null) }
         }
     }
 
     private fun startEngine(call: MethodCall, result: MethodChannel.Result) {
         try {
             val modelPath = call.argument<String>("modelPath")
-                ?: return result.error("BAD_ARGS", "modelPath is required", null)
+                ?: run {
+                    mainHandler.post { result.error("BAD_ARGS", "modelPath is required", null) }
+                    return
+                }
             val configAssetPath = call.argument<String>("configAssetPath")
-                ?: return result.error("BAD_ARGS", "configAssetPath is required", null)
+                ?: run {
+                    mainHandler.post { result.error("BAD_ARGS", "configAssetPath is required", null) }
+                    return
+                }
 
             val configDir = File(filesDir, "katago/config").apply { mkdirs() }
             val configFile = File(configDir, configAssetPath.substringAfterLast('/'))
@@ -162,18 +195,21 @@ class MainActivity : FlutterActivity() {
 
             val binaryFile = resolveKatagoExecutablePath()
             if (!binaryFile.exists()) {
-                return result.error(
-                    "BINARY_NOT_FOUND",
-                    "KataGo executable not found in nativeLibraryDir",
-                    mapOf(
-                        "nativeLibPath" to binaryFile.absolutePath,
-                        "nativeLibraryDir" to applicationInfo.nativeLibraryDir,
-                        "exists" to binaryFile.exists(),
-                        "canExecute" to binaryFile.canExecute(),
-                        "abi" to Build.SUPPORTED_ABIS.joinToString(","),
-                        "note" to "Put katago into android/app/src/main/jniLibs/<abi>/libkatago.so"
+                mainHandler.post {
+                    result.error(
+                        "BINARY_NOT_FOUND",
+                        "KataGo executable not found in nativeLibraryDir",
+                        mapOf(
+                            "nativeLibPath" to binaryFile.absolutePath,
+                            "nativeLibraryDir" to applicationInfo.nativeLibraryDir,
+                            "exists" to binaryFile.exists(),
+                            "canExecute" to binaryFile.canExecute(),
+                            "abi" to Build.SUPPORTED_ABIS.joinToString(","),
+                            "note" to "Put katago into android/app/src/main/jniLibs/<abi>/libkatago.so"
+                        )
                     )
-                )
+                }
+                return
             }
             if (!binaryFile.canExecute()) {
                 try {
@@ -184,7 +220,8 @@ class MainActivity : FlutterActivity() {
             }
 
             if (katagoProcess?.isAlive == true) {
-                return result.success(mapOf("started" to true))
+                mainHandler.post { result.success(mapOf("started" to true)) }
+                return
             }
 
             val process = ProcessBuilder(
@@ -212,33 +249,33 @@ class MainActivity : FlutterActivity() {
                     null
                 }
                 cleanupEngineState()
-                return result.error(
-                    "ENGINE_STARTUP_FAILED",
-                    "KataGo process exited immediately after start",
-                    mapOf(
-                        "logs" to startupLogs.ifEmpty { "<no startup logs>" },
-                        "exitCode" to exitCode,
-                        "binaryPath" to binaryFile.absolutePath,
-                        "modelPath" to modelPath,
-                        "configPath" to configFile.absolutePath
+                mainHandler.post {
+                    result.error(
+                        "ENGINE_STARTUP_FAILED",
+                        "KataGo process exited immediately after start",
+                        mapOf(
+                            "logs" to startupLogs.ifEmpty { "<no startup logs>" },
+                            "exitCode" to exitCode,
+                            "binaryPath" to binaryFile.absolutePath,
+                            "modelPath" to modelPath,
+                            "configPath" to configFile.absolutePath
+                        )
                     )
-                )
+                }
+                return
             }
 
-            result.success(
-                mapOf(
-                    "started" to true
-                )
-            )
+            mainHandler.post { result.success(mapOf("started" to true)) }
         } catch (e: Exception) {
-            result.error("START_ENGINE_FAILED", e.message, null)
+            mainHandler.post { result.error("START_ENGINE_FAILED", e.message, null) }
         }
     }
 
     private fun analyzeOnce(call: MethodCall, result: MethodChannel.Result) {
         try {
             if (katagoProcess?.isAlive != true) {
-                return result.error("ENGINE_NOT_RUNNING", "KataGo engine is not started", null)
+                mainHandler.post { result.error("ENGINE_NOT_RUNNING", "KataGo engine is not started", null) }
+                return
             }
 
             val queryId = call.argument<String>("queryId") ?: "query-default"
@@ -261,6 +298,7 @@ class MainActivity : FlutterActivity() {
                 put("boardYSize", boardSize)
                 put("initialPlayer", initialPlayer)
                 put("maxVisits", maxVisits)
+                put("maxTime", thinkingTimeMs / 1000.0)
                 put("moves", parseTokenArray(moveTokens))
                 put("initialStones", parseTokenArray(initialStones))
                 put("includeOwnership", includeOwnership)
@@ -273,28 +311,32 @@ class MainActivity : FlutterActivity() {
                 flush()
             }
 
-            val timeoutMs = timeoutOverrideMs?.toLong() ?: maxOf(8000L, thinkingTimeMs.toLong() * 6L)
+            val timeoutMs = timeoutOverrideMs?.toLong() ?: (thinkingTimeMs.toLong() * 2L)
             val response = readJsonResponseByQueryId(queryId, timeoutMs)
             if (response == null) {
                 if (katagoProcess?.isAlive != true) {
-                    return result.error("ENGINE_DIED", "KataGo process exited during analysis", null)
+                    mainHandler.post { result.error("ENGINE_DIED", "KataGo process exited during analysis", null) }
+                    return
                 }
-                return result.error(
-                    "ENGINE_TIMEOUT",
-                    "No valid JSON response from engine within ${timeoutMs}ms",
-                    mapOf(
-                        "queryId" to queryId,
-                        "timeoutMs" to timeoutMs,
-                        "engineOutputTail" to readAnyLinesWithin(1200).ifEmpty { "<no output>" }
+                val tail = readAnyLinesWithin(1200).ifEmpty { "<no output>" }
+                mainHandler.post {
+                    result.error(
+                        "ENGINE_TIMEOUT",
+                        "No valid JSON response from engine within ${timeoutMs}ms",
+                        mapOf("queryId" to queryId, "timeoutMs" to timeoutMs, "engineOutputTail" to tail)
                     )
-                )
+                }
+                return
             }
             if (response.has("error")) {
-                return result.error(
-                    "ENGINE_RESPONSE_ERROR",
-                    response.optString("error", "Unknown KataGo error"),
-                    response.toString()
-                )
+                mainHandler.post {
+                    result.error(
+                        "ENGINE_RESPONSE_ERROR",
+                        response.optString("error", "Unknown KataGo error"),
+                        response.toString()
+                    )
+                }
+                return
             }
 
             val rootInfo = response.optJSONObject("rootInfo")
@@ -324,18 +366,18 @@ class MainActivity : FlutterActivity() {
             if (ownershipList.isNotEmpty()) {
                 resultMap["ownership"] = ownershipList
             }
-            result.success(resultMap)
+            mainHandler.post { result.success(resultMap) }
         } catch (e: Exception) {
-            result.error("ANALYZE_FAILED", e.message, null)
+            mainHandler.post { result.error("ANALYZE_FAILED", e.message, null) }
         }
     }
 
     private fun shutdownEngine(result: MethodChannel.Result) {
         try {
             cleanupEngineState()
-            result.success(null)
+            mainHandler.post { result.success(null) }
         } catch (e: Exception) {
-            result.error("SHUTDOWN_FAILED", e.message, null)
+            mainHandler.post { result.error("SHUTDOWN_FAILED", e.message, null) }
         }
     }
 
@@ -369,7 +411,8 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun resolveKatagoExecutablePath(): File {
-        return File(applicationInfo.nativeLibraryDir, "libkatago.so")
+        val packagedLib = File(applicationInfo.nativeLibraryDir, "libkatago.so")
+        return packagedLib
     }
 
     private fun sha256(file: File): String {

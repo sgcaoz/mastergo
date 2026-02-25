@@ -1,0 +1,137 @@
+{
+  "config": {
+    "board_size": 19,
+    "komi": 6.5,
+    "games": 10,
+    "black_assignment": "b28 first 5 games, b18 next 5 games",
+    "models": {
+      "b28_v2": {
+        "path": "/Users/caozheng/mastergo/android/katagomodel/src/main/assets/models/katago/standard.bin.gz",
+        "visits": 2
+      },
+      "b18_v10": {
+        "path": "/Users/caozheng/mastergo/tool/bench/models/kata1-b18c384nbt-s9996604416-d4316597426.bin.gz",
+        "visits": 10
+      }
+    }
+  },
+  "games": [
+    {
+      "game": 1,
+      "black": "b28_v2",
+      "white": "b18_v10",
+      "winner": "b18_v10",
+      "reason": "auto_resign_below_5pct_after_50",
+      "moves": 79,
+      "avg_ms_black": 317.846,
+      "avg_ms_white": 812.659
+    },
+    {
+      "game": 2,
+      "black": "b28_v2",
+      "white": "b18_v10",
+      "winner": "b18_v10",
+      "reason": "auto_resign_below_5pct_after_50",
+      "moves": 115,
+      "avg_ms_black": 319.92,
+      "avg_ms_white": 674.573
+    },
+    {
+      "game": 3,
+      "black": "b28_v2",
+      "white": "b18_v10",
+      "winner": "b18_v10",
+      "reason": "auto_resign_below_5pct_after_50",
+      "moves": 139,
+      "avg_ms_black": 309.215,
+      "avg_ms_white": 777.647
+    },
+    {
+      "game": 4,
+      "black": "b28_v2",
+      "white": "b18_v10",
+      "winner": "b18_v10",
+      "reason": "auto_resign_below_5pct_after_50",
+      "moves": 151,
+      "avg_ms_black": 317.845,
+      "avg_ms_white": 806.235
+    },
+    {
+      "game": 5,
+      "black": "b28_v2",
+      "white": "b18_v10",
+      "winner": "b28_v2",
+      "reason": "auto_resign_below_5pct_after_50",
+      "moves": 126,
+      "avg_ms_black": 307.655,
+      "avg_ms_white": 559.474
+    },
+    {
+      "game": 6,
+      "black": "b18_v10",
+      "white": "b28_v2",
+      "winner": "b18_v10",
+      "reason": "auto_resign_below_5pct_after_50",
+      "moves": 58,
+      "avg_ms_black": 786.828,
+      "avg_ms_white": 335.311
+    },
+    {
+      "game": 7,
+      "black": "b18_v10",
+      "white": "b28_v2",
+      "winner": "b28_v2",
+      "reason": "auto_resign_below_5pct_after_50",
+      "moves": 61,
+      "avg_ms_black": 619.513,
+      "avg_ms_white": 320.614
+    },
+    {
+      "game": 8,
+      "black": "b18_v10",
+      "white": "b28_v2",
+      "winner": "b18_v10",
+      "reason": "auto_resign_below_5pct_after_50",
+      "moves": 118,
+      "avg_ms_black": 556.387,
+      "avg_ms_white": 206.323
+    },
+    {
+      "game": 9,
+      "black": "b18_v10",
+      "white": "b28_v2",
+      "winner": "b18_v10",
+      "reason": "auto_resign_below_5pct_after_50",
+      "moves": 58,
+      "avg_ms_black": 0.361,
+      "avg_ms_white": 0.226
+    },
+    {
+      "game": 10,
+      "black": "b18_v10",
+      "white": "b28_v2",
+      "winner": "b28_v2",
+      "reason": "auto_resign_below_5pct_after_50",
+      "moves": 131,
+      "avg_ms_black": 832.783,
+      "avg_ms_white": 329.14
+    }
+  ],
+  "totals": {
+    "b28_v2": {
+      "wins": 3,
+      "moves": 519,
+      "avg_move_ms": 287.801
+    },
+    "b18_v10": {
+      "wins": 7,
+      "moves": 517,
+      "avg_move_ms": 675.707
+    }
+  },
+  "files": {
+    "moves_csv": "/Users/caozheng/mastergo/tool/bench/results/b18_vs_b28_moves_20260225_010201.csv",
+    "summary_json": "/Users/caozheng/mastergo/tool/bench/results/b18_vs_b28_summary_20260225_010201.json",
+    "live_status_json": "/Users/caozheng/mastergo/tool/bench/results/b18_vs_b28_live_status_20260225_010201.json"
+  }
+}
