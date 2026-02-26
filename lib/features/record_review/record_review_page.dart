@@ -46,10 +46,7 @@ Future<String?> getInitialDirectoryForImport() async {
 }
 
 class _PickedSgfFile {
-  const _PickedSgfFile({
-    required this.fileName,
-    required this.content,
-  });
+  const _PickedSgfFile({required this.fileName, required this.content});
 
   final String fileName;
   final String content;
@@ -84,7 +81,9 @@ void _showInvalidSgfMessage(BuildContext context) {
     );
 }
 
-Future<_PickedSgfFile?> _pickSgfWithDownloadPriority(BuildContext context) async {
+Future<_PickedSgfFile?> _pickSgfWithDownloadPriority(
+  BuildContext context,
+) async {
   Future<_PickedSgfFile?> pickFromSystem({String? initialDirectory}) async {
     final FilePickerResult? pick = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -154,6 +153,7 @@ class RecordReviewPage extends StatefulWidget {
   final String? initialTitle;
   final String? initialRecordId;
   final String? initialSource;
+
   /// 由「用本应用打开」传入的 SGF 内容，以导入棋谱方式处理
   final String? openWithSgfContent;
   final String? openWithSgfFileName;
@@ -186,13 +186,16 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
 
   /// 从 ai_profiles.json 加载的档位；未加载完或为空时用 _fallbackReviewProfile。
   List<AnalysisProfile> _reviewProfiles = <AnalysisProfile>[];
+
   /// 当前选中的档位下标，默认 1（挑战）。
   int _reviewProfileIndex = 1;
 
-  AnalysisProfile get _analysisProfile =>
-      _reviewProfiles.isNotEmpty
-          ? _reviewProfiles[_reviewProfileIndex.clamp(0, _reviewProfiles.length - 1)]
-          : _fallbackReviewProfile;
+  AnalysisProfile get _analysisProfile => _reviewProfiles.isNotEmpty
+      ? _reviewProfiles[_reviewProfileIndex.clamp(
+          0,
+          _reviewProfiles.length - 1,
+        )]
+      : _fallbackReviewProfile;
 
   /// 第三方/名局等复盘用快速档（首档）。
   AnalysisProfile get _thirdPartyAnalysisProfile =>
@@ -248,6 +251,130 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     final RegExp reg = RegExp('$key\\[([^\\]]*)\\]');
     final Match? m = reg.firstMatch(sgf);
     return m == null ? '' : (m.group(1) ?? '').trim();
+  }
+
+  String _localizedResultFromRe(String rawRe) {
+    final String re = rawRe.trim();
+    if (re.isEmpty) {
+      return _t(zh: '结果未知', en: 'Unknown result', ja: '結果不明', ko: '결과 미상');
+    }
+    final String upper = re.toUpperCase();
+    if (upper == '0' ||
+        upper == 'DRAW' ||
+        upper == 'JIGO' ||
+        re == '和棋' ||
+        re == '持碁' ||
+        re == '무승부') {
+      return _t(zh: '和棋', en: 'Draw', ja: '持碁', ko: '무승부');
+    }
+    final RegExp sgfCode = RegExp(
+      r'^([BW])\+([0-9]+(?:\.[0-9]+)?|R|RESIGN|T|TIME|F|FORFEIT)$',
+      caseSensitive: false,
+    );
+    final Match? m = sgfCode.firstMatch(re);
+    if (m != null) {
+      final bool blackWin = (m.group(1) ?? '').toUpperCase() == 'B';
+      final String value = (m.group(2) ?? '').toUpperCase();
+      if (value == 'R' || value == 'RESIGN') {
+        return blackWin
+            ? _t(
+                zh: '黑中盘胜',
+                en: 'Black wins by resignation',
+                ja: '黒中押し勝ち',
+                ko: '흑 불계승',
+              )
+            : _t(
+                zh: '白中盘胜',
+                en: 'White wins by resignation',
+                ja: '白中押し勝ち',
+                ko: '백 불계승',
+              );
+      }
+      if (value == 'T' || value == 'TIME') {
+        return blackWin
+            ? _t(
+                zh: '黑超时胜',
+                en: 'Black wins on time',
+                ja: '黒の時間勝ち',
+                ko: '흑 시간승',
+              )
+            : _t(
+                zh: '白超时胜',
+                en: 'White wins on time',
+                ja: '白の時間勝ち',
+                ko: '백 시간승',
+              );
+      }
+      if (value == 'F' || value == 'FORFEIT') {
+        return blackWin
+            ? _t(
+                zh: '黑弃权胜',
+                en: 'Black wins by forfeit',
+                ja: '黒の不戦勝',
+                ko: '흑 부전승',
+              )
+            : _t(
+                zh: '白弃权胜',
+                en: 'White wins by forfeit',
+                ja: '白の不戦勝',
+                ko: '백 부전승',
+              );
+      }
+      return blackWin
+          ? _t(
+              zh: '黑胜 $value 目',
+              en: 'Black wins by $value',
+              ja: '黒 $value 目勝ち',
+              ko: '흑 $value 집 승',
+            )
+          : _t(
+              zh: '白胜 $value 目',
+              en: 'White wins by $value',
+              ja: '白 $value 目勝ち',
+              ko: '백 $value 집 승',
+            );
+    }
+    final Match? blackByPoints = RegExp(
+      r'^黑胜\s*([0-9]+(?:\.[0-9]+)?)\s*目$',
+    ).firstMatch(re);
+    if (blackByPoints != null) {
+      final String value = blackByPoints.group(1)!;
+      return _t(
+        zh: '黑胜 $value 目',
+        en: 'Black wins by $value',
+        ja: '黒 $value 目勝ち',
+        ko: '흑 $value 집 승',
+      );
+    }
+    final Match? whiteByPoints = RegExp(
+      r'^白胜\s*([0-9]+(?:\.[0-9]+)?)\s*目$',
+    ).firstMatch(re);
+    if (whiteByPoints != null) {
+      final String value = whiteByPoints.group(1)!;
+      return _t(
+        zh: '白胜 $value 目',
+        en: 'White wins by $value',
+        ja: '白 $value 目勝ち',
+        ko: '백 $value 집 승',
+      );
+    }
+    if (re.contains('AI认输') || re.contains('AI 投了')) {
+      return _t(
+        zh: 'AI认输，你胜',
+        en: 'AI resigned, you win',
+        ja: 'AIが投了、あなたの勝ち',
+        ko: 'AI 기권, 당신 승리',
+      );
+    }
+    if (re.contains('你认输') || re.contains('YOU RESIGNED')) {
+      return _t(
+        zh: '你认输，AI胜',
+        en: 'You resigned, AI wins',
+        ja: 'あなたが投了、AI勝ち',
+        ko: '당신 기권, AI 승리',
+      );
+    }
+    return re;
   }
 
   String _fmtTs(int ms) {
@@ -346,20 +473,25 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
               return _recordRepository.listBySource(source);
             }
             // 单一可见列表：下载页兼容展示历史 import 与当前 download。
-            final List<GameRecord> download = await _recordRepository.listBySource(
-              'download',
-            );
+            final List<GameRecord> download = await _recordRepository
+                .listBySource('download');
             final List<GameRecord> legacyImport = await _recordRepository
                 .listBySource('import');
             final Map<String, GameRecord> merged = <String, GameRecord>{};
-            for (final GameRecord r in <GameRecord>[...download, ...legacyImport]) {
+            for (final GameRecord r in <GameRecord>[
+              ...download,
+              ...legacyImport,
+            ]) {
               final GameRecord? old = merged[r.id];
               if (old == null || r.updatedAtMs > old.updatedAtMs) {
                 merged[r.id] = r;
               }
             }
             final List<GameRecord> list = merged.values.toList()
-              ..sort((GameRecord a, GameRecord b) => b.updatedAtMs.compareTo(a.updatedAtMs));
+              ..sort(
+                (GameRecord a, GameRecord b) =>
+                    b.updatedAtMs.compareTo(a.updatedAtMs),
+              );
             return list;
           }());
     return FutureBuilder<List<GameRecord>>(
@@ -372,7 +504,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         if (records.isEmpty) {
           return Center(
             child: Text(
-              _t(zh: '暂无棋谱', en: 'No records yet', ja: '棋譜はありません', ko: '기보가 없습니다'),
+              _t(
+                zh: '暂无棋谱',
+                en: 'No records yet',
+                ja: '棋譜はありません',
+                ko: '기보가 없습니다',
+              ),
             ),
           );
         }
@@ -384,6 +521,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
             final String pb = _sgfProp(r.sgf, 'PB');
             final String pw = _sgfProp(r.sgf, 'PW');
             final String re = _sgfProp(r.sgf, 'RE');
+            final String localizedResult = _localizedResultFromRe(re);
             final int moves = _sgfParser.parse(r.sgf).mainLineNodes().length;
             final String title = (pb.isNotEmpty || pw.isNotEmpty)
                 ? '${pb.isEmpty ? 'Black' : pb} vs ${pw.isEmpty ? 'White' : pw}'
@@ -392,10 +530,10 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
               title: Text(title),
               subtitle: Text(
                 _t(
-                  zh: '${_fmtTs(r.updatedAtMs)}  ·  手数$moves  ·  ${re.isEmpty ? '结果未知' : re}',
-                  en: '${_fmtTs(r.updatedAtMs)}  ·  Moves $moves  ·  ${re.isEmpty ? 'Unknown result' : re}',
-                  ja: '${_fmtTs(r.updatedAtMs)}  ·  手数$moves  ·  ${re.isEmpty ? '結果不明' : re}',
-                  ko: '${_fmtTs(r.updatedAtMs)}  ·  수순$moves  ·  ${re.isEmpty ? '결과 미상' : re}',
+                  zh: '${_fmtTs(r.updatedAtMs)}  ·  手数$moves  ·  $localizedResult',
+                  en: '${_fmtTs(r.updatedAtMs)}  ·  Moves $moves  ·  $localizedResult',
+                  ja: '${_fmtTs(r.updatedAtMs)}  ·  手数$moves  ·  $localizedResult',
+                  ko: '${_fmtTs(r.updatedAtMs)}  ·  수순$moves  ·  $localizedResult',
                 ),
               ),
               leading: _selectMode
@@ -443,7 +581,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                             ),
                           ),
                         IconButton(
-                          tooltip: _t(zh: '删除', en: 'Delete', ja: '削除', ko: '삭제'),
+                          tooltip: _t(
+                            zh: '删除',
+                            en: 'Delete',
+                            ja: '削除',
+                            ko: '삭제',
+                          ),
                           icon: const Icon(Icons.delete_outline),
                           onPressed: () => _deleteOne(r),
                         ),
@@ -468,7 +611,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text(_t(zh: '删除棋谱', en: 'Delete record', ja: '棋譜削除', ko: '기보 삭제')),
+          title: Text(
+            _t(zh: '删除棋谱', en: 'Delete record', ja: '棋譜削除', ko: '기보 삭제'),
+          ),
           content: Text(
             _t(
               zh: '确定删除「${record.title}」吗？',
@@ -518,7 +663,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text(_t(zh: '批量删除', en: 'Bulk delete', ja: '一括削除', ko: '일괄 삭제')),
+          title: Text(
+            _t(zh: '批量删除', en: 'Bulk delete', ja: '一括削除', ko: '일괄 삭제'),
+          ),
           content: Text(
             _t(
               zh: '确定删除已选 ${_selectedIds.length} 条棋谱吗？',
@@ -613,13 +760,27 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                               _selectMode = false;
                             });
                           },
-                          child: Text(_t(zh: '取消选择', en: 'Clear', ja: '選択解除', ko: '선택 해제')),
+                          child: Text(
+                            _t(
+                              zh: '取消选择',
+                              en: 'Clear',
+                              ja: '選択解除',
+                              ko: '선택 해제',
+                            ),
+                          ),
                         ),
                         FilledButton(
                           onPressed: _selectedIds.isEmpty
                               ? null
                               : _deleteSelected,
-                          child: Text(_t(zh: '批量删除', en: 'Bulk Delete', ja: '一括削除', ko: '일괄 삭제')),
+                          child: Text(
+                            _t(
+                              zh: '批量删除',
+                              en: 'Bulk Delete',
+                              ja: '一括削除',
+                              ko: '일괄 삭제',
+                            ),
+                          ),
                         ),
                       ],
                     )
@@ -628,9 +789,25 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           ),
           TabBar(
             tabs: <Tab>[
-              Tab(text: _t(zh: '本机对局', en: 'Local Games', ja: 'ローカル対局', ko: '로컬 대국')),
-              Tab(text: _t(zh: '下载棋谱', en: 'Downloads', ja: 'ダウンロード棋譜', ko: '다운로드 기보')),
-              Tab(text: _t(zh: '名局', en: 'Master Games', ja: '名局', ko: '명국')),
+              Tab(
+                text: _t(
+                  zh: '本机对局',
+                  en: 'Local Games',
+                  ja: 'ローカル対局',
+                  ko: '로컬 대국',
+                ),
+              ),
+              Tab(
+                text: _t(
+                  zh: '下载棋谱',
+                  en: 'Downloads',
+                  ja: 'ダウンロード棋譜',
+                  ko: '다운로드 기보',
+                ),
+              ),
+              Tab(
+                text: _t(zh: '名局', en: 'Master Games', ja: '名局', ko: '명국'),
+              ),
             ],
           ),
           Expanded(
@@ -667,7 +844,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                         if (games.isEmpty) {
                           return Center(
                             child: Text(
-                              _t(zh: '暂无名局', en: 'No master games', ja: '名局がありません', ko: '명국이 없습니다'),
+                              _t(
+                                zh: '暂无名局',
+                                en: 'No master games',
+                                ja: '名局がありません',
+                                ko: '명국이 없습니다',
+                              ),
                             ),
                           );
                         }
@@ -678,9 +860,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                             final GameRecord record = games[i];
                             return ListTile(
                               title: Text(record.title),
-                              subtitle: Text(
-                                _masterRecordSubtitle(record),
-                              ),
+                              subtitle: Text(_masterRecordSubtitle(record)),
                               trailing: const Icon(Icons.chevron_right),
                               onTap: () async {
                                 if (!context.mounted) return;
@@ -740,7 +920,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _recordId = widget.initialRecordId;
       _recordSource = widget.initialSource ?? 'master';
       _status = widget.initialTitle == null
-          ? _t(zh: '已加载棋谱', en: 'SGF loaded', ja: '棋譜を読み込みました', ko: '기보 불러오기 완료')
+          ? _t(
+              zh: '已加载棋谱',
+              en: 'SGF loaded',
+              ja: '棋譜を読み込みました',
+              ko: '기보 불러오기 완료',
+            )
           : _t(
               zh: '已加载 ${widget.initialTitle}',
               en: 'Loaded ${widget.initialTitle}',
@@ -762,11 +947,15 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
 
   Future<void> _loadReviewProfiles() async {
     try {
-      final List<AnalysisProfile> list = await _profileRepository.loadProfiles();
+      final List<AnalysisProfile> list = await _profileRepository
+          .loadProfiles();
       if (!mounted) return;
       setState(() {
         _reviewProfiles = list;
-        _reviewProfileIndex = _reviewProfileIndex.clamp(0, list.isEmpty ? 0 : list.length - 1);
+        _reviewProfileIndex = _reviewProfileIndex.clamp(
+          0,
+          list.isEmpty ? 0 : list.length - 1,
+        );
       });
     } catch (_) {}
   }
@@ -860,7 +1049,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       await _applyImportedSgf(picked.content, picked.fileName);
     } catch (e) {
       setState(() {
-        _status = '${_t(zh: '读取失败', en: 'Read failed', ja: '読み込み失敗', ko: '읽기 실패')}: $e';
+        _status =
+            '${_t(zh: '读取失败', en: 'Read failed', ja: '読み込み失敗', ko: '읽기 실패')}: $e';
       });
     }
   }
@@ -891,10 +1081,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       });
       return;
     }
-    final String ruleset =
-        parsed.rules.isEmpty ? _ruleset : rulePresetFromString(parsed.rules).id;
-    final GameRecord? existing =
-        await _recordRepository.findImportBySgfContent(content);
+    final String ruleset = parsed.rules.isEmpty
+        ? _ruleset
+        : rulePresetFromString(parsed.rules).id;
+    final GameRecord? existing = await _recordRepository.findImportBySgfContent(
+      content,
+    );
     final String recordId =
         existing?.id ?? _recordRepository.newId(prefix: 'download');
     final String winrateJson =
@@ -971,7 +1163,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     }
     setState(() {
       _downloading = true;
-      _status = _t(zh: '下载中...', en: 'Downloading...', ja: 'ダウンロード中...', ko: '다운로드 중...');
+      _status = _t(
+        zh: '下载中...',
+        en: 'Downloading...',
+        ja: 'ダウンロード中...',
+        ko: '다운로드 중...',
+      );
     });
     try {
       final Uri uri = Uri.parse(url);
@@ -994,8 +1191,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       final String title = uri.pathSegments.isNotEmpty
           ? uri.pathSegments.last
           : 'downloaded.sgf';
-      final GameRecord? existing =
-          await _recordRepository.findImportBySgfContent(content);
+      final GameRecord? existing = await _recordRepository
+          .findImportBySgfContent(content);
       if (existing == null) {
         _recordId = _recordRepository.newId(prefix: 'download');
         _recordSource = 'download';
@@ -1049,7 +1246,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         return;
       }
       setState(() {
-        _status = '${_t(zh: '下载失败', en: 'Download failed', ja: 'ダウンロード失敗', ko: '다운로드 실패')}: $e';
+        _status =
+            '${_t(zh: '下载失败', en: 'Download failed', ja: 'ダウンロード失敗', ko: '다운로드 실패')}: $e';
       });
     } finally {
       if (mounted) {
@@ -1118,7 +1316,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   }
 
   Future<void> _analyzeCurrentWinrate() async {
-    if (_sgf == null) {
+    if (_sgf == null || _analyzing) {
       return;
     }
     setState(() {
@@ -1172,7 +1370,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       }
       setState(() {
         _winrates.addAll(data);
-        _status = _t(zh: '分析完成', en: 'Analysis complete', ja: '解析完了', ko: '분석 완료');
+        _status = _t(
+          zh: '分析完成',
+          en: 'Analysis complete',
+          ja: '解析完了',
+          ko: '분석 완료',
+        );
       });
     } on PlatformException catch (e) {
       setState(() {
@@ -1187,7 +1390,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       });
     } catch (e) {
       setState(() {
-        _status = '${_t(zh: '分析失败', en: 'Analysis failed', ja: '解析失敗', ko: '분석 실패')}: $e';
+        _status =
+            '${_t(zh: '分析失败', en: 'Analysis failed', ja: '解析失敗', ko: '분석 실패')}: $e';
       });
     } finally {
       if (mounted) {
@@ -1228,7 +1432,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     return GoPoint(x, y);
   }
 
-  Future<KatagoAnalyzeResult> _requestOwnershipAnalysis(GoGameState state) async {
+  Future<KatagoAnalyzeResult> _requestOwnershipAnalysis(
+    GoGameState state,
+  ) async {
     if (_sgf == null) {
       throw StateError(
         _t(zh: '无棋谱', en: 'No SGF loaded', ja: '棋譜がありません', ko: '기보가 없습니다'),
@@ -1253,6 +1459,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     final StoneColor gameStartingPlayer = _sgf!.initialBlackStones.isNotEmpty
         ? StoneColor.white
         : StoneColor.black;
+
     /// 复盘局势分析：思考 10s 与对局一致，避免 iOS 超时。
     final AnalysisProfile ownershipProfile = AnalysisProfile(
       id: '${_analysisProfile.id}-ownership-fast',
@@ -1262,8 +1469,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       thinkingTimeMs: 10000,
       includeOwnership: true,
     );
-    final AnalysisProfile reviewProfile =
-        _isThirdPartyRecord ? _thirdPartyAnalysisProfile : _analysisProfile;
+    final AnalysisProfile reviewProfile = _isThirdPartyRecord
+        ? _thirdPartyAnalysisProfile
+        : _analysisProfile;
     final int timeoutMs = max(
       _timeoutMsForReviewProfile(ownershipProfile),
       _timeoutMsForReviewProfile(reviewProfile),
@@ -1298,8 +1506,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     final StoneColor gameStartingPlayer = _sgf!.initialBlackStones.isNotEmpty
         ? StoneColor.white
         : StoneColor.black;
-    final AnalysisProfile hintProfile =
-        _isThirdPartyRecord ? _thirdPartyAnalysisProfile : _analysisProfile;
+    final AnalysisProfile hintProfile = _isThirdPartyRecord
+        ? _thirdPartyAnalysisProfile
+        : _analysisProfile;
     final int timeoutMs = _timeoutMsForReviewProfile(hintProfile);
     final KatagoAnalyzeResult analyzed = await _katagoAdapter.analyze(
       KatagoAnalyzeRequest(
@@ -1412,13 +1621,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
               good ? h.kind == HintKind.brilliant : h.kind == HintKind.blunder,
         )
         .map(
-          (MoveHint h) =>
-              _t(
-                zh: '第${h.turn}手后${_blackWinrateLabel()} ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
-                en: 'After move ${h.turn}: ${_blackWinrateLabel()} ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
-                ja: '${h.turn}手後: ${_blackWinrateLabel()} ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
-                ko: '${h.turn}수 후: ${_blackWinrateLabel()} ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
-              ),
+          (MoveHint h) => _t(
+            zh: '第${h.turn}手后${_blackWinrateLabel()} ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
+            en: 'After move ${h.turn}: ${_blackWinrateLabel()} ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
+            ja: '${h.turn}手後: ${_blackWinrateLabel()} ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
+            ko: '${h.turn}수 후: ${_blackWinrateLabel()} ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
+          ),
         )
         .toList();
   }
@@ -1501,7 +1709,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           OutlinedButton.icon(
             onPressed: _importSgf,
             icon: const Icon(Icons.upload_file),
-            label: Text(_t(zh: '选择 SGF', en: 'Select SGF', ja: 'SGF選択', ko: 'SGF 선택')),
+            label: Text(
+              _t(zh: '选择 SGF', en: 'Select SGF', ja: 'SGF選択', ko: 'SGF 선택'),
+            ),
           ),
           const SizedBox(height: 8),
           TextFormField(
@@ -1599,7 +1809,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                 _reviewProfiles.length,
                 (int i) => DropdownMenuItem<int>(
                   value: i,
-                  child: Text('${_reviewProfiles[i].name} (${_reviewProfiles[i].maxVisits})'),
+                  child: Text(
+                    '${_s.aiProfileName(_reviewProfiles[i].id, _reviewProfiles[i].name)} (${_reviewProfiles[i].maxVisits})',
+                  ),
                 ),
               ),
               onChanged: (int? value) {
@@ -1625,20 +1837,24 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                   ),
                   const SizedBox(width: 8),
                   DropdownButton<int>(
-                    value: _reviewProfileIndex.clamp(0, _reviewProfiles.length - 1),
+                    value: _reviewProfileIndex.clamp(
+                      0,
+                      _reviewProfiles.length - 1,
+                    ),
                     isDense: true,
                     items: List<DropdownMenuItem<int>>.generate(
                       _reviewProfiles.length,
                       (int i) => DropdownMenuItem<int>(
                         value: i,
                         child: Text(
-                          '${_reviewProfiles[i].name} (${_reviewProfiles[i].maxVisits})',
+                          '${_s.aiProfileName(_reviewProfiles[i].id, _reviewProfiles[i].name)} (${_reviewProfiles[i].maxVisits})',
                           style: const TextStyle(fontSize: 13),
                         ),
                       ),
                     ),
                     onChanged: (int? value) {
-                      if (value != null) setState(() => _reviewProfileIndex = value);
+                      if (value != null)
+                        setState(() => _reviewProfileIndex = value);
                     },
                   ),
                 ],
@@ -1685,15 +1901,27 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
               final GoGameState cur = _reviewTryState ?? boardState;
               try {
                 setState(() {
-                  _reviewTryState =
-                      cur.play(GoMove(player: cur.toPlay, point: p));
+                  _reviewTryState = cur.play(
+                    GoMove(player: cur.toPlay, point: p),
+                  );
                   _reviewHintPoints = <GoPoint>[];
                 });
                 playStoneSound();
               } catch (_) {}
             },
             onRequestHint: () async {
+              if (_reviewHintLoading || _reviewOwnershipLoading) {
+                return;
+              }
               setState(() => _reviewHintLoading = true);
+              setState(() {
+                _status = _t(
+                  zh: '正在计算提示点...',
+                  en: 'Calculating hint points...',
+                  ja: '候補手を計算中...',
+                  ko: '추천 수 계산 중...',
+                );
+              });
               try {
                 await _requestReviewHint(_reviewTryState ?? boardState);
               } on PlatformException catch (e) {
@@ -1710,26 +1938,45 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                   _reviewHintPoints = <GoPoint>[];
                   _status = msg;
                 });
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(msg)));
               } catch (e) {
                 if (mounted) {
                   setState(() {
                     _reviewHintPoints = <GoPoint>[];
-                    _status = '${_t(zh: '提示失败', en: 'Hint failed', ja: '候補手取得失敗', ko: '추천 수 실패')}: $e';
+                    _status =
+                        '${_t(zh: '提示失败', en: 'Hint failed', ja: '候補手取得失敗', ko: '추천 수 실패')}: $e';
                   });
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('${_t(zh: '提示失败', en: 'Hint failed', ja: '候補手取得失敗', ko: '추천 수 실패')}: $e')),
+                    SnackBar(
+                      content: Text(
+                        '${_t(zh: '提示失败', en: 'Hint failed', ja: '候補手取得失敗', ko: '추천 수 실패')}: $e',
+                      ),
+                    ),
                   );
                 }
               }
               if (mounted) setState(() => _reviewHintLoading = false);
             },
             onRequestOwnership: () async {
+              if (_reviewOwnershipLoading || _reviewHintLoading) {
+                return;
+              }
               final GoGameState state = _reviewTryState ?? boardState;
               setState(() => _reviewOwnershipLoading = true);
+              setState(() {
+                _status = _t(
+                  zh: '正在分析局势...',
+                  en: 'Analyzing position...',
+                  ja: '局勢解析中...',
+                  ko: '형세 분석 중...',
+                );
+              });
               try {
-                final KatagoAnalyzeResult res =
-                    await _requestOwnershipAnalysis(state);
+                final KatagoAnalyzeResult res = await _requestOwnershipAnalysis(
+                  state,
+                );
                 if (!mounted) return;
                 setState(() => _reviewOwnershipLoading = false);
                 showOwnershipResultSheet(context, state, res);
@@ -1744,7 +1991,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                           ko: '분석 시간 초과. 난이도를 낮추거나 성능이 좋은 기기를 사용해 보세요.',
                         )
                       : '${_t(zh: '局势分析失败', en: 'Position analysis failed', ja: '局勢解析失敗', ko: '형세 분석 실패')}: ${e.message ?? e.code}';
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text(msg)));
                 }
               } catch (e) {
                 if (mounted) {
@@ -1822,13 +2071,17 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                       },
                       decoration: const InputDecoration(
                         isDense: true,
-                        contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 8,
+                        ),
                         border: OutlineInputBorder(),
                       ),
                     ),
                   ),
                 IconButton(
-                  onPressed: (_currentNode != null &&
+                  onPressed:
+                      (_currentNode != null &&
                           _currentNode!.children.isNotEmpty)
                       ? _next
                       : null,
@@ -1847,7 +2100,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                   ),
                   if (reviewGoodHints.isEmpty)
                     Text(
-                      _t(zh: '暂无明显妙手', en: 'No obvious brilliant moves', ja: '目立つ妙手なし', ko: '뚜렷한 묘수 없음'),
+                      _t(
+                        zh: '暂无明显妙手',
+                        en: 'No obvious brilliant moves',
+                        ja: '目立つ妙手なし',
+                        ko: '뚜렷한 묘수 없음',
+                      ),
                     )
                   else
                     ...reviewGoodHints.map(Text.new),
@@ -1858,7 +2116,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                   ),
                   if (reviewBadHints.isEmpty)
                     Text(
-                      _t(zh: '暂无明显恶手', en: 'No obvious blunders', ja: '目立つ悪手なし', ko: '뚜렷한 악수 없음'),
+                      _t(
+                        zh: '暂无明显恶手',
+                        en: 'No obvious blunders',
+                        ja: '目立つ悪手なし',
+                        ko: '뚜렷한 악수 없음',
+                      ),
                     )
                   else
                     ...reviewBadHints.map(Text.new),
@@ -1874,7 +2137,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                         )
                       : const Icon(Icons.analytics_outlined),
                   label: Text(
-                    _t(zh: '分析当前胜率', en: 'Analyze current winrate', ja: '現在勝率を解析', ko: '현재 승률 분석'),
+                    _t(
+                      zh: '分析当前胜率',
+                      en: 'Analyze current winrate',
+                      ja: '現在勝率を解析',
+                      ko: '현재 승률 분석',
+                    ),
                   ),
                 ),
               ],
@@ -1892,7 +2160,11 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     final bool isPushedPage = route?.canPop == true;
     if (isPushedPage) {
       return Scaffold(
-        appBar: AppBar(title: Text(_t(zh: '打谱复盘', en: 'SGF Review', ja: '棋譜復盤', ko: '기보 복기'))),
+        appBar: AppBar(
+          title: Text(
+            _t(zh: '打谱复盘', en: 'SGF Review', ja: '棋譜復盤', ko: '기보 복기'),
+          ),
+        ),
         body: content,
       );
     }
@@ -1948,7 +2220,9 @@ class _ImportSgfPageState extends State<_ImportSgfPage> {
       _status = null;
     });
     try {
-      final _PickedSgfFile? picked = await _pickSgfWithDownloadPriority(context);
+      final _PickedSgfFile? picked = await _pickSgfWithDownloadPriority(
+        context,
+      );
       if (picked == null) {
         return;
       }
@@ -1983,7 +2257,8 @@ class _ImportSgfPageState extends State<_ImportSgfPage> {
       );
     } catch (e) {
       setState(() {
-        _status = '${_t(zh: '导入失败', en: 'Import failed', ja: 'インポート失敗', ko: '가져오기 실패')}: $e';
+        _status =
+            '${_t(zh: '导入失败', en: 'Import failed', ja: 'インポート失敗', ko: '가져오기 실패')}: $e';
       });
     } finally {
       if (mounted) {
@@ -2038,7 +2313,8 @@ class _ImportSgfPageState extends State<_ImportSgfPage> {
       );
     } catch (e) {
       setState(() {
-        _status = '${_t(zh: '下载失败', en: 'Download failed', ja: 'ダウンロード失敗', ko: '다운로드 실패')}: $e';
+        _status =
+            '${_t(zh: '下载失败', en: 'Download failed', ja: 'ダウンロード失敗', ko: '다운로드 실패')}: $e';
       });
     } finally {
       if (mounted) {
@@ -2063,7 +2339,9 @@ class _ImportSgfPageState extends State<_ImportSgfPage> {
           FilledButton.icon(
             onPressed: _loading ? null : _pickFile,
             icon: const Icon(Icons.upload_file),
-            label: Text(_t(zh: '选择 SGF', en: 'Select SGF', ja: 'SGF選択', ko: 'SGF 선택')),
+            label: Text(
+              _t(zh: '选择 SGF', en: 'Select SGF', ja: 'SGF選択', ko: 'SGF 선택'),
+            ),
           ),
           const SizedBox(height: 12),
           TextFormField(
@@ -2082,7 +2360,14 @@ class _ImportSgfPageState extends State<_ImportSgfPage> {
           FilledButton.icon(
             onPressed: _loading ? null : _downloadByUrl,
             icon: const Icon(Icons.download),
-            label: Text(_t(zh: '下载并导入', en: 'Download & Import', ja: 'ダウンロードしてインポート', ko: '다운로드 및 가져오기')),
+            label: Text(
+              _t(
+                zh: '下载并导入',
+                en: 'Download & Import',
+                ja: 'ダウンロードしてインポート',
+                ko: '다운로드 및 가져오기',
+              ),
+            ),
           ),
           if (_status != null) ...<Widget>[
             const SizedBox(height: 12),

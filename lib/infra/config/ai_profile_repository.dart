@@ -13,11 +13,26 @@ class AIProfileRepository {
     final Map<String, dynamic> data = await _loader.loadMap(_assetPath);
     final List<dynamic> items =
         data['profiles'] as List<dynamic>? ?? <dynamic>[];
-    return items
-        .map(
-          (dynamic item) =>
-              AnalysisProfile.fromJson(item as Map<String, dynamic>),
-        )
-        .toList();
+    final Map<String, AnalysisProfile> profilesById =
+        <String, AnalysisProfile>{};
+    for (final dynamic item in items) {
+      final AnalysisProfile profile = AnalysisProfile.fromJson(
+        item as Map<String, dynamic>,
+      );
+      final String normalizedId = profile.id.trim();
+      if (normalizedId.isEmpty) {
+        continue;
+      }
+      // Keep the latest entry when duplicated ids exist in config.
+      profilesById[normalizedId] = AnalysisProfile(
+        id: normalizedId,
+        name: profile.name.trim(),
+        description: profile.description.trim(),
+        maxVisits: profile.maxVisits,
+        thinkingTimeMs: profile.thinkingTimeMs,
+        includeOwnership: profile.includeOwnership,
+      );
+    }
+    return profilesById.values.toList();
   }
 }

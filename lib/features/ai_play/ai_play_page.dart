@@ -144,7 +144,9 @@ class _AIPlayPageState extends State<AIPlayPage> {
       if (!_boardSizes.contains(boardSize)) {
         return;
       }
-      if (!kRulePresets.any((RulePreset p) => p.id == ruleset && p.supportsAiPlay)) {
+      if (!kRulePresets.any(
+        (RulePreset p) => p.id == ruleset && p.supportsAiPlay,
+      )) {
         return;
       }
       if (!mounted) {
@@ -207,7 +209,10 @@ class _AIPlayPageState extends State<AIPlayPage> {
             return ListView(
               padding: const EdgeInsets.all(16),
               children: <Widget>[
-                Text(_s.tabAiPlay, style: Theme.of(context).textTheme.headlineSmall),
+                Text(
+                  _s.tabAiPlay,
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<int>(
                   initialValue: _boardSize,
@@ -274,7 +279,9 @@ class _AIPlayPageState extends State<AIPlayPage> {
                       .map(
                         (RulePreset p) => DropdownMenuItem<String>(
                           value: p.id,
-                          child: Text('${_s.ruleLabel(p.id)} (KM ${p.defaultKomi})'),
+                          child: Text(
+                            '${_s.ruleLabel(p.id)} (KM ${p.defaultKomi})',
+                          ),
                         ),
                       )
                       .toList(),
@@ -309,7 +316,9 @@ class _AIPlayPageState extends State<AIPlayPage> {
                 ),
                 const SizedBox(height: 8),
                 FilledButton.icon(
-                  onPressed: selected == null ? null : () => _startBattle(selected),
+                  onPressed: selected == null
+                      ? null
+                      : () => _startBattle(selected),
                   icon: const Icon(Icons.play_arrow),
                   label: Text(
                     _s.pick(
@@ -384,6 +393,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
   final List<GoGameState> _history = <GoGameState>[];
   List<GoPoint> _handicapStones = <GoPoint>[];
   GoScore? _finalScore;
+
   /// 终局结果文案，仅由局势分析（winrate/scoreLead）得出；不拿数目判断胜负。
   String? _finalResultTextFromAnalysis;
   String? _resignResultText;
@@ -395,6 +405,8 @@ class _AIBattlePageState extends State<_AIBattlePage>
   String? _tryBaseStatus;
   List<GoPoint> _hintPoints = <GoPoint>[];
   String? _hintSummary;
+  bool _hintLoading = false;
+  bool _ownershipLoading = false;
   bool _aiThinking = false;
   bool _restoring = true;
   bool _engineReady = false;
@@ -410,17 +422,13 @@ class _AIBattlePageState extends State<_AIBattlePage>
       return _language;
     }
   }
+
   String _t({
     required String zh,
     required String en,
     required String ja,
     required String ko,
-  }) => AppStrings(_effectiveLanguage()).pick(
-    zh: zh,
-    en: en,
-    ja: ja,
-    ko: ko,
-  );
+  }) => AppStrings(_effectiveLanguage()).pick(zh: zh, en: en, ja: ja, ko: ko);
 
   double? get _playerWinrate {
     if (_blackWinrate == null) {
@@ -593,6 +601,8 @@ class _AIBattlePageState extends State<_AIBattlePage>
     _blackWinrate = null;
     _winrateByTurn.clear();
     _hintSummary = null;
+    _hintLoading = false;
+    _ownershipLoading = false;
     _blackBase = Duration.zero;
     _whiteBase = Duration.zero;
     _activeClockStone = null;
@@ -956,7 +966,9 @@ class _AIBattlePageState extends State<_AIBattlePage>
                 'B:${GoMove(player: GoStone.black, point: p).toGtp(widget.boardSize)}',
           )
           .toList();
-      final AnalysisProfile profile = _effectiveProfileForTurn(_game!.moves.length);
+      final AnalysisProfile profile = _effectiveProfileForTurn(
+        _game!.moves.length,
+      );
       final KatagoAnalyzeResult res = await widget.adapter.analyze(
         KatagoAnalyzeRequest(
           queryId: 'count-${DateTime.now().millisecondsSinceEpoch}',
@@ -975,8 +987,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
         ),
       );
       // 用局势分析判定胜负，不用数目
-      final double blackWr =
-          _normalizeBlackWinrate(res.winrate, res.scoreLead);
+      final double blackWr = _normalizeBlackWinrate(res.winrate, res.scoreLead);
       final double leadForBlack = _game!.toPlay == GoStone.black
           ? res.scoreLead
           : -res.scoreLead;
@@ -1003,7 +1014,8 @@ class _AIBattlePageState extends State<_AIBattlePage>
         setState(() {
           _finalScore = score ?? _game!.scoreByRules(_rules);
           _finalResultTextFromAnalysis = resultText;
-          _status = '${_t(zh: '终局', en: 'Game over', ja: '終局', ko: '종국')}: $resultText';
+          _status =
+              '${_t(zh: '终局', en: 'Game over', ja: '終局', ko: '종국')}: $resultText';
         });
         unawaited(_persistSession());
       }
@@ -1089,8 +1101,11 @@ class _AIBattlePageState extends State<_AIBattlePage>
       }
     }
     // 面积 = 活子 + 己方空点 + 对方死子所在点（按 ownership 归属）
-    final double blackArea = (livingBlackStones + blackTerritory + deadWhiteInBlack).toDouble();
-    final double whiteArea = (livingWhiteStones + whiteTerritory + deadBlackInWhite).toDouble() + _rules.komi;
+    final double blackArea =
+        (livingBlackStones + blackTerritory + deadWhiteInBlack).toDouble();
+    final double whiteArea =
+        (livingWhiteStones + whiteTerritory + deadBlackInWhite).toDouble() +
+        _rules.komi;
     return GoScore(
       blackStones: livingBlackStones,
       whiteStones: livingWhiteStones,
@@ -1250,24 +1265,16 @@ class _AIBattlePageState extends State<_AIBattlePage>
   String _buildOpeningStatus(GoStone toPlay) {
     return widget.handicap > 0
         ? _t(
-            zh:
-                '$_handicapLabel，贴目${_rules.komi.toStringAsFixed(1)}，你执黑，${toPlay == _playerStone ? '请落子' : 'AI先行'}',
-            en:
-                '$_handicapLabel, komi ${_rules.komi.toStringAsFixed(1)}, you are Black, ${toPlay == _playerStone ? 'your move' : 'AI first'}',
-            ja:
-                '$_handicapLabel、コミ${_rules.komi.toStringAsFixed(1)}、あなたは黒、${toPlay == _playerStone ? '着手してください' : 'AI先手'}',
-            ko:
-                '$_handicapLabel, 덤 ${_rules.komi.toStringAsFixed(1)}, 당신은 흑, ${toPlay == _playerStone ? '착수하세요' : 'AI 선착'}',
+            zh: '$_handicapLabel，贴目${_rules.komi.toStringAsFixed(1)}，你执黑，${toPlay == _playerStone ? '请落子' : 'AI先行'}',
+            en: '$_handicapLabel, komi ${_rules.komi.toStringAsFixed(1)}, you are Black, ${toPlay == _playerStone ? 'your move' : 'AI first'}',
+            ja: '$_handicapLabel、コミ${_rules.komi.toStringAsFixed(1)}、あなたは黒、${toPlay == _playerStone ? '着手してください' : 'AI先手'}',
+            ko: '$_handicapLabel, 덤 ${_rules.komi.toStringAsFixed(1)}, 당신은 흑, ${toPlay == _playerStone ? '착수하세요' : 'AI 선착'}',
           )
         : _t(
-            zh:
-                '$_handicapLabel，你执${_playerStone == GoStone.black ? '黑' : '白'}，${toPlay == _playerStone ? '请落子' : 'AI先行'}',
-            en:
-                '$_handicapLabel, you are ${_playerStone == GoStone.black ? 'Black' : 'White'}, ${toPlay == _playerStone ? 'your move' : 'AI first'}',
-            ja:
-                '$_handicapLabel、あなたは${_playerStone == GoStone.black ? '黒' : '白'}、${toPlay == _playerStone ? '着手してください' : 'AI先手'}',
-            ko:
-                '$_handicapLabel, 당신은 ${_playerStone == GoStone.black ? '흑' : '백'}, ${toPlay == _playerStone ? '착수하세요' : 'AI 선착'}',
+            zh: '$_handicapLabel，你执${_playerStone == GoStone.black ? '黑' : '白'}，${toPlay == _playerStone ? '请落子' : 'AI先行'}',
+            en: '$_handicapLabel, you are ${_playerStone == GoStone.black ? 'Black' : 'White'}, ${toPlay == _playerStone ? 'your move' : 'AI first'}',
+            ja: '$_handicapLabel、あなたは${_playerStone == GoStone.black ? '黒' : '白'}、${toPlay == _playerStone ? '着手してください' : 'AI先手'}',
+            ko: '$_handicapLabel, 당신은 ${_playerStone == GoStone.black ? '흑' : '백'}, ${toPlay == _playerStone ? '착수하세요' : 'AI 선착'}',
           );
   }
 
@@ -1285,18 +1292,8 @@ class _AIBattlePageState extends State<_AIBattlePage>
       );
     }
     return state.toPlay == _playerStone
-        ? _t(
-            zh: '轮到你落子',
-            en: 'Your move',
-            ja: 'あなたの番',
-            ko: '당신 차례',
-          )
-        : _t(
-            zh: '轮到AI落子',
-            en: 'AI turn',
-            ja: 'AIの番',
-            ko: 'AI 차례',
-          );
+        ? _t(zh: '轮到你落子', en: 'Your move', ja: 'あなたの番', ko: '당신 차례')
+        : _t(zh: '轮到AI落子', en: 'AI turn', ja: 'AIの番', ko: 'AI 차례');
   }
 
   bool _shouldAiResign(double aiWinrate) {
@@ -1343,9 +1340,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
     final StringBuffer sb = StringBuffer();
     final String result =
         _resignResultText ??
-        (_finalScore != null
-            ? (_finalResultTextFromAnalysis ?? '?')
-            : '?');
+        (_finalScore != null ? (_finalResultTextFromAnalysis ?? '?') : '?');
     sb.write('(;GM[1]FF[4]');
     sb.write('SZ[${widget.boardSize}]');
     sb.write('KM[${_rules.komi}]');
@@ -1456,7 +1451,9 @@ class _AIBattlePageState extends State<_AIBattlePage>
   Future<bool> _restoreSession() async {
     final String? preferredId = widget.preferredRestoreRecordId;
     if (preferredId != null && preferredId.isNotEmpty) {
-      final GameRecord? preferred = await _recordRepository.loadById(preferredId);
+      final GameRecord? preferred = await _recordRepository.loadById(
+        preferredId,
+      );
       if (preferred != null && await _tryRestoreFromRecord(preferred)) {
         return true;
       }
@@ -1468,12 +1465,13 @@ class _AIBattlePageState extends State<_AIBattlePage>
     final GameRecord? temp = await _recordRepository.loadLatestBySource(
       'battle_temp',
     );
-    final List<GameRecord> candidates = <GameRecord>[
-      if (local != null) local,
-      if (temp != null) temp,
-    ]
-      ..removeWhere((GameRecord r) => r.id == preferredId)
-      ..sort((GameRecord a, GameRecord b) => b.updatedAtMs.compareTo(a.updatedAtMs));
+    final List<GameRecord> candidates =
+        <GameRecord>[if (local != null) local, if (temp != null) temp]
+          ..removeWhere((GameRecord r) => r.id == preferredId)
+          ..sort(
+            (GameRecord a, GameRecord b) =>
+                b.updatedAtMs.compareTo(a.updatedAtMs),
+          );
 
     for (final GameRecord record in candidates) {
       final bool restored = await _tryRestoreFromRecord(record);
@@ -1629,7 +1627,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
               'B:${GoMove(player: GoStone.black, point: p).toGtp(widget.boardSize)}',
         )
         .toList();
-    // 提示与当前对局难度一致，直接使用 widget.profile（快速=20 / 挑战=50 / 专业=150 / 大师=500）
+    // 提示与当前对局难度一致，直接使用当前档位配置（避免硬编码档位数值）。
     final KatagoAnalyzeResult analyzed = await widget.adapter.analyze(
       KatagoAnalyzeRequest(
         queryId: 'hint-${DateTime.now().millisecondsSinceEpoch}',
@@ -1685,10 +1683,11 @@ class _AIBattlePageState extends State<_AIBattlePage>
 
   Future<void> _showHintPoints() async {
     final GoGameState? state = _game;
-    if (state == null || _aiThinking || _isGameOver) {
+    if (state == null || _aiThinking || _isGameOver || _hintLoading) {
       return;
     }
     setState(() {
+      _hintLoading = true;
       _status = _t(
         zh: '正在计算提示点...',
         en: 'Calculating hint points...',
@@ -1745,6 +1744,11 @@ class _AIBattlePageState extends State<_AIBattlePage>
         _status =
             '${_t(zh: '提示失败', en: 'Hint failed', ja: '候補手取得失敗', ko: '추천 수 실패')}: $e';
       });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _hintLoading = false;
+      });
     }
   }
 
@@ -1759,8 +1763,9 @@ class _AIBattlePageState extends State<_AIBattlePage>
               'B:${GoMove(player: GoStone.black, point: p).toGtp(widget.boardSize)}',
         )
         .toList();
-    final AnalysisProfile profile =
-        _effectiveProfileForTurn(state.moves.length);
+    final AnalysisProfile profile = _effectiveProfileForTurn(
+      state.moves.length,
+    );
     // 局势分析：快速档 10s 思考，超时 = 2×（与原则一致）。
     final AnalysisProfile ownershipProfile = AnalysisProfile(
       id: '${profile.id}-ownership-fast',
@@ -1801,10 +1806,11 @@ class _AIBattlePageState extends State<_AIBattlePage>
 
   Future<void> _showPositionAnalysis() async {
     final GoGameState? state = _game;
-    if (state == null || _aiThinking || _isGameOver) {
+    if (state == null || _aiThinking || _isGameOver || _ownershipLoading) {
       return;
     }
     setState(() {
+      _ownershipLoading = true;
       _status = _t(
         zh: '正在分析局势...',
         en: 'Analyzing position...',
@@ -1828,8 +1834,12 @@ class _AIBattlePageState extends State<_AIBattlePage>
       if (!mounted) {
         return;
       }
-      _showOwnershipResultSheet(context, state, res,
-          lastMovePoint: _lastMovePoint());
+      _showOwnershipResultSheet(
+        context,
+        state,
+        res,
+        lastMovePoint: _lastMovePoint(),
+      );
     } on PlatformException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -1847,6 +1857,11 @@ class _AIBattlePageState extends State<_AIBattlePage>
       setState(() {
         _status =
             '${_t(zh: '局势分析失败', en: 'Position analysis failed', ja: '局勢解析失敗', ko: '형세 분석 실패')}: $e';
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _ownershipLoading = false;
       });
     }
   }
@@ -1882,13 +1897,9 @@ class _AIBattlePageState extends State<_AIBattlePage>
       _pendingPoint = null;
       _hintPoints = <GoPoint>[];
       _hintSummary = null;
-      _status = _tryBaseStatus ??
-          _t(
-            zh: '已结束试下',
-            en: 'Try mode ended',
-            ja: '試し打ち終了',
-            ko: '시험 수순 종료',
-          );
+      _status =
+          _tryBaseStatus ??
+          _t(zh: '已结束试下', en: 'Try mode ended', ja: '試し打ち終了', ko: '시험 수순 종료');
     });
   }
 
@@ -1904,13 +1915,12 @@ class _AIBattlePageState extends State<_AIBattlePage>
               good ? h.kind == HintKind.brilliant : h.kind == HintKind.blunder,
         )
         .map(
-          (MoveHint h) =>
-              _t(
-                zh: '第${h.turn}手后玩家胜率 ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
-                en: 'After move ${h.turn}, player winrate ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
-                ja: '${h.turn}手後のプレイヤー勝率 ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
-                ko: '${h.turn}수 후 플레이어 승률 ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
-              ),
+          (MoveHint h) => _t(
+            zh: '第${h.turn}手后玩家胜率 ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
+            en: 'After move ${h.turn}, player winrate ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
+            ja: '${h.turn}手後のプレイヤー勝率 ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
+            ko: '${h.turn}수 후 플레이어 승률 ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
+          ),
         )
         .toList();
   }
@@ -1949,6 +1959,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
                   reviewHints = <GoPoint>[];
                   reviewHintSummary = null;
                 }
+
                 return ListView(
                   controller: controller,
                   padding: const EdgeInsets.all(12),
@@ -1996,8 +2007,9 @@ class _AIBattlePageState extends State<_AIBattlePage>
                         if (!context.mounted) return;
                         setSheetState(() {
                           reviewHintLoading = false;
-                          reviewHints =
-                              hints.map((_HintPointInfo h) => h.point).toList();
+                          reviewHints = hints
+                              .map((_HintPointInfo h) => h.point)
+                              .toList();
                           reviewHintSummary = hints.isEmpty
                               ? null
                               : hints
@@ -2047,14 +2059,15 @@ class _AIBattlePageState extends State<_AIBattlePage>
                             icon: const Icon(Icons.chevron_left),
                           ),
                           Expanded(
-                              child: Text(
-                                _t(
-                                  zh: '当前手数: $turn/${moves.length}',
-                                  en: 'Turn: $turn/${moves.length}',
-                                  ja: '手数: $turn/${moves.length}',
-                                  ko: '수순: $turn/${moves.length}',
-                                ),
-                              )),
+                            child: Text(
+                              _t(
+                                zh: '当前手数: $turn/${moves.length}',
+                                en: 'Turn: $turn/${moves.length}',
+                                ja: '手数: $turn/${moves.length}',
+                                ko: '수순: $turn/${moves.length}',
+                              ),
+                            ),
+                          ),
                           IconButton(
                             onPressed: turn < moves.length
                                 ? () => setSheetState(() => turn += 1)
@@ -2085,7 +2098,8 @@ class _AIBattlePageState extends State<_AIBattlePage>
                               padding: const EdgeInsets.only(top: 6),
                               child: Text(() {
                                 final double black = _winrateByTurn[turn]!;
-                                final double player = _playerStone == GoStone.black
+                                final double player =
+                                    _playerStone == GoStone.black
                                     ? black
                                     : (1.0 - black);
                                 return _t(
@@ -2098,7 +2112,12 @@ class _AIBattlePageState extends State<_AIBattlePage>
                             ),
                           const SizedBox(height: 8),
                           Text(
-                            _t(zh: '妙手提示', en: 'Brilliant Moves', ja: '妙手', ko: '묘수'),
+                            _t(
+                              zh: '妙手提示',
+                              en: 'Brilliant Moves',
+                              ja: '妙手',
+                              ko: '묘수',
+                            ),
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
                           if (good.isEmpty)
@@ -2230,7 +2249,9 @@ class _AIBattlePageState extends State<_AIBattlePage>
                       onTapPoint: _onBoardTap,
                       lastMovePoint: _lastMovePoint(),
                       tentativePoint: _pendingPoint,
-                      tentativeStone: _pendingPoint == null ? null : _playerStone,
+                      tentativeStone: _pendingPoint == null
+                          ? null
+                          : _playerStone,
                       hintPoints: _hintPoints,
                       padding: 14,
                     ),
@@ -2242,14 +2263,10 @@ class _AIBattlePageState extends State<_AIBattlePage>
                     children: <Widget>[
                       Text(
                         _t(
-                          zh:
-                              '当前落子: ${game.toPlay == GoStone.black ? '黑' : '白'}${_aiThinking ? '（AI思考中）' : ''}',
-                          en:
-                              'To play: ${game.toPlay == GoStone.black ? 'Black' : 'White'}${_aiThinking ? ' (AI thinking)' : ''}',
-                          ja:
-                              '手番: ${game.toPlay == GoStone.black ? '黒' : '白'}${_aiThinking ? '（AI思考中）' : ''}',
-                          ko:
-                              '현재 차례: ${game.toPlay == GoStone.black ? '흑' : '백'}${_aiThinking ? ' (AI 생각 중)' : ''}',
+                          zh: '当前落子: ${game.toPlay == GoStone.black ? '黑' : '白'}${_aiThinking ? '（AI思考中）' : ''}',
+                          en: 'To play: ${game.toPlay == GoStone.black ? 'Black' : 'White'}${_aiThinking ? ' (AI thinking)' : ''}',
+                          ja: '手番: ${game.toPlay == GoStone.black ? '黒' : '白'}${_aiThinking ? '（AI思考中）' : ''}',
+                          ko: '현재 차례: ${game.toPlay == GoStone.black ? '흑' : '백'}${_aiThinking ? ' (AI 생각 중)' : ''}',
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -2268,12 +2285,12 @@ class _AIBattlePageState extends State<_AIBattlePage>
                       if (_hintSummary != null) ...<Widget>[
                         const SizedBox(height: 4),
                         Text(
-                            _t(
-                              zh: '提示胜率: $_hintSummary',
-                              en: 'Hint winrate: $_hintSummary',
-                              ja: '候補手勝率: $_hintSummary',
-                              ko: '추천 수 승률: $_hintSummary',
-                            ),
+                          _t(
+                            zh: '提示胜率: $_hintSummary',
+                            en: 'Hint winrate: $_hintSummary',
+                            ja: '候補手勝率: $_hintSummary',
+                            ko: '추천 수 승률: $_hintSummary',
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 12),
@@ -2283,38 +2300,30 @@ class _AIBattlePageState extends State<_AIBattlePage>
                         const SizedBox(height: 4),
                         Text(
                           _finalResultTextFromAnalysis != null
-                                ? _t(
-                                    zh:
-                                        '终局结果: $_finalResultTextFromAnalysis（黑地${_finalScore!.blackTerritory}，白地${_finalScore!.whiteTerritory}）',
-                                    en:
-                                        'Result: $_finalResultTextFromAnalysis (B territory ${_finalScore!.blackTerritory}, W territory ${_finalScore!.whiteTerritory})',
-                                    ja:
-                                        '終局結果: $_finalResultTextFromAnalysis（黒地${_finalScore!.blackTerritory}、白地${_finalScore!.whiteTerritory}）',
-                                    ko:
-                                        '종국 결과: $_finalResultTextFromAnalysis (흑 집 ${_finalScore!.blackTerritory}, 백 집 ${_finalScore!.whiteTerritory})',
-                                  )
-                                : _t(
-                                    zh:
-                                        '终局结果: 分析失败（黑地${_finalScore!.blackTerritory}，白地${_finalScore!.whiteTerritory}）',
-                                    en:
-                                        'Result: analysis failed (B territory ${_finalScore!.blackTerritory}, W territory ${_finalScore!.whiteTerritory})',
-                                    ja:
-                                        '終局結果: 解析失敗（黒地${_finalScore!.blackTerritory}、白地${_finalScore!.whiteTerritory}）',
-                                    ko:
-                                        '종국 결과: 분석 실패 (흑 집 ${_finalScore!.blackTerritory}, 백 집 ${_finalScore!.whiteTerritory})',
-                                  ),
+                              ? _t(
+                                  zh: '终局结果: $_finalResultTextFromAnalysis（黑地${_finalScore!.blackTerritory}，白地${_finalScore!.whiteTerritory}）',
+                                  en: 'Result: $_finalResultTextFromAnalysis (B territory ${_finalScore!.blackTerritory}, W territory ${_finalScore!.whiteTerritory})',
+                                  ja: '終局結果: $_finalResultTextFromAnalysis（黒地${_finalScore!.blackTerritory}、白地${_finalScore!.whiteTerritory}）',
+                                  ko: '종국 결과: $_finalResultTextFromAnalysis (흑 집 ${_finalScore!.blackTerritory}, 백 집 ${_finalScore!.whiteTerritory})',
+                                )
+                              : _t(
+                                  zh: '终局结果: 分析失败（黑地${_finalScore!.blackTerritory}，白地${_finalScore!.whiteTerritory}）',
+                                  en: 'Result: analysis failed (B territory ${_finalScore!.blackTerritory}, W territory ${_finalScore!.whiteTerritory})',
+                                  ja: '終局結果: 解析失敗（黒地${_finalScore!.blackTerritory}、白地${_finalScore!.whiteTerritory}）',
+                                  ko: '종국 결과: 분석 실패 (흑 집 ${_finalScore!.blackTerritory}, 백 집 ${_finalScore!.whiteTerritory})',
+                                ),
                         ),
                       ],
                       if (_resignResultText != null) ...<Widget>[
                         const SizedBox(height: 4),
-                          Text(
-                            _t(
-                              zh: '终局结果: $_resignResultText',
-                              en: 'Result: $_resignResultText',
-                              ja: '終局結果: $_resignResultText',
-                              ko: '종국 결과: $_resignResultText',
-                            ),
+                        Text(
+                          _t(
+                            zh: '终局结果: $_resignResultText',
+                            en: 'Result: $_resignResultText',
+                            ja: '終局結果: $_resignResultText',
+                            ko: '종국 결과: $_resignResultText',
                           ),
+                        ),
                       ],
                       const SizedBox(height: 6),
                       Wrap(
@@ -2325,21 +2334,58 @@ class _AIBattlePageState extends State<_AIBattlePage>
                             (!_isGameOver && !_aiThinking)
                                 ? (_tryMode ? _exitTryMode : _enterTryMode)
                                 : null,
-                              _tryMode
-                                  ? _t(zh: '结束试下', en: 'End Try', ja: '試し打ち終了', ko: '시험 종료')
-                                  : _t(zh: '试下', en: 'Try', ja: '試し打ち', ko: '시험 수순'),
+                            _tryMode
+                                ? _t(
+                                    zh: '结束试下',
+                                    en: 'End Try',
+                                    ja: '試し打ち終了',
+                                    ko: '시험 종료',
+                                  )
+                                : _t(
+                                    zh: '试下',
+                                    en: 'Try',
+                                    ja: '試し打ち',
+                                    ko: '시험 수순',
+                                  ),
                           ),
                           compactBtn(
-                            (_engineReady && !_isGameOver && !_aiThinking)
+                            (_engineReady &&
+                                    !_isGameOver &&
+                                    !_aiThinking &&
+                                    !_hintLoading &&
+                                    !_ownershipLoading)
                                 ? _showHintPoints
                                 : null,
-                              _t(zh: '提示', en: 'Hint', ja: 'ヒント', ko: '힌트'),
+                            _hintLoading
+                                ? _t(
+                                    zh: '提示中...',
+                                    en: 'Hinting...',
+                                    ja: 'ヒント中...',
+                                    ko: '힌트 중...',
+                                  )
+                                : _t(zh: '提示', en: 'Hint', ja: 'ヒント', ko: '힌트'),
                           ),
                           compactBtn(
-                            (_engineReady && !_isGameOver && !_aiThinking)
+                            (_engineReady &&
+                                    !_isGameOver &&
+                                    !_aiThinking &&
+                                    !_hintLoading &&
+                                    !_ownershipLoading)
                                 ? _showPositionAnalysis
                                 : null,
-                              _t(zh: '局势分析', en: 'Position', ja: '局勢解析', ko: '형세 분석'),
+                            _ownershipLoading
+                                ? _t(
+                                    zh: '分析中...',
+                                    en: 'Analyzing...',
+                                    ja: '解析中...',
+                                    ko: '분석 중...',
+                                  )
+                                : _t(
+                                    zh: '局势分析',
+                                    en: 'Position',
+                                    ja: '局勢解析',
+                                    ko: '형세 분석',
+                                  ),
                           ),
                           compactBtn(
                             (game.toPlay == _playerStone &&
@@ -2357,20 +2403,24 @@ class _AIBattlePageState extends State<_AIBattlePage>
                         runSpacing: 4,
                         children: <Widget>[
                           compactBtn(
-                            (_history.length > 1 && !_aiThinking) ? _undo : null,
-                              _t(zh: '悔棋', en: 'Undo', ja: '待った', ko: '되돌리기'),
+                            (_history.length > 1 && !_aiThinking)
+                                ? _undo
+                                : null,
+                            _t(zh: '悔棋', en: 'Undo', ja: '待った', ko: '되돌리기'),
                           ),
                           compactBtn(
-                            (!_isGameOver && !_aiThinking) ? _playerResign : null,
-                              _t(zh: '认输', en: 'Resign', ja: '投了', ko: '기권'),
+                            (!_isGameOver && !_aiThinking)
+                                ? _playerResign
+                                : null,
+                            _t(zh: '认输', en: 'Resign', ja: '投了', ko: '기권'),
                           ),
                           compactBtn(
                             _isGameOver ? _showReviewSheet : null,
-                              _t(zh: '复盘', en: 'Review', ja: '復盤', ko: '복기'),
+                            _t(zh: '复盘', en: 'Review', ja: '復盤', ko: '복기'),
                           ),
                           compactBtn(
                             () => Navigator.of(context).pop(),
-                              _t(zh: '返回', en: 'Back', ja: '戻る', ko: '뒤로'),
+                            _t(zh: '返回', en: 'Back', ja: '戻る', ko: '뒤로'),
                           ),
                         ],
                       ),
@@ -2385,7 +2435,9 @@ class _AIBattlePageState extends State<_AIBattlePage>
                           width: 320,
                           padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
                           decoration: BoxDecoration(
-                            border: Border(left: BorderSide(color: Colors.black12)),
+                            border: Border(
+                              left: BorderSide(color: Colors.black12),
+                            ),
                             color: Colors.white,
                           ),
                           child: SingleChildScrollView(child: panelContent),
@@ -2401,7 +2453,9 @@ class _AIBattlePageState extends State<_AIBattlePage>
                         width: double.infinity,
                         padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
                         decoration: BoxDecoration(
-                          border: Border(top: BorderSide(color: Colors.black12)),
+                          border: Border(
+                            top: BorderSide(color: Colors.black12),
+                          ),
                           color: Colors.white,
                         ),
                         child: panelContent,

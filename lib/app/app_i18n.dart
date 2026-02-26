@@ -2,6 +2,44 @@ import 'package:flutter/material.dart';
 
 enum AppLanguage { zh, en, ja, ko }
 
+enum _AiProfileTier { beginner, intermediate, professional, master, unknown }
+
+_AiProfileTier _resolveAiProfileTier(String id, String fallback) {
+  final String normalizedId = id.trim().toLowerCase();
+  switch (normalizedId) {
+    case 'beginner':
+    case 'fast':
+      return _AiProfileTier.beginner;
+    case 'intermediate':
+    case 'challenge':
+      return _AiProfileTier.intermediate;
+    case 'professional':
+    case 'pro':
+    case 'advanced':
+      return _AiProfileTier.professional;
+    case 'master':
+      return _AiProfileTier.master;
+  }
+  final String normalizedName = fallback.trim().toLowerCase();
+  if (normalizedName.contains('快速') || normalizedName.contains('fast')) {
+    return _AiProfileTier.beginner;
+  }
+  if (normalizedName.contains('挑战') ||
+      normalizedName.contains('进阶') ||
+      normalizedName.contains('challenge')) {
+    return _AiProfileTier.intermediate;
+  }
+  if (normalizedName.contains('专业') ||
+      normalizedName.contains('职业') ||
+      normalizedName.contains('pro')) {
+    return _AiProfileTier.professional;
+  }
+  if (normalizedName.contains('大师') || normalizedName.contains('master')) {
+    return _AiProfileTier.master;
+  }
+  return _AiProfileTier.unknown;
+}
+
 extension AppLanguageX on AppLanguage {
   Locale get locale => switch (this) {
     AppLanguage.zh => const Locale('zh'),
@@ -107,26 +145,11 @@ class AppStrings {
   String ruleLabel(String ruleId) {
     switch (ruleId) {
       case 'chinese':
-        return pick(
-          zh: '中国规则',
-          en: 'Chinese Rules',
-          ja: '中国ルール',
-          ko: '중국 규칙',
-        );
+        return pick(zh: '中国规则', en: 'Chinese Rules', ja: '中国ルール', ko: '중국 규칙');
       case 'japanese':
-        return pick(
-          zh: '日本规则',
-          en: 'Japanese Rules',
-          ja: '日本ルール',
-          ko: '일본 규칙',
-        );
+        return pick(zh: '日本规则', en: 'Japanese Rules', ja: '日本ルール', ko: '일본 규칙');
       case 'korean':
-        return pick(
-          zh: '韩国规则',
-          en: 'Korean Rules',
-          ja: '韓国ルール',
-          ko: '한국 규칙',
-        );
+        return pick(zh: '韩国规则', en: 'Korean Rules', ja: '韓国ルール', ko: '한국 규칙');
       case 'classical':
         return pick(
           zh: '古谱规则（不贴目）',
@@ -140,52 +163,62 @@ class AppStrings {
   }
 
   String aiProfileName(String id, String fallback) {
-    switch (id) {
-      case 'beginner':
+    final _AiProfileTier tier = _resolveAiProfileTier(id, fallback);
+    switch (tier) {
+      case _AiProfileTier.beginner:
         return pick(zh: '快速', en: 'Fast', ja: '快速', ko: '빠름');
-      case 'intermediate':
+      case _AiProfileTier.intermediate:
         return pick(zh: '挑战', en: 'Challenge', ja: 'チャレンジ', ko: '도전');
-      case 'professional':
-        return pick(zh: '专业', en: 'Pro', ja: 'プロ', ko: '프로');
-      case 'master':
+      case _AiProfileTier.professional:
+        return pick(zh: '进阶', en: 'Advanced', ja: '上級', ko: '고급');
+      case _AiProfileTier.master:
         return pick(zh: '大师', en: 'Master', ja: 'マスター', ko: '마스터');
-      default:
-        return fallback;
+      case _AiProfileTier.unknown:
+        final String normalized = fallback.trim();
+        if (normalized.isNotEmpty) {
+          return normalized;
+        }
+        return id;
     }
   }
 
   String aiProfileDescription(String id, String fallback) {
-    switch (id) {
-      case 'beginner':
+    final _AiProfileTier tier = _resolveAiProfileTier(id, fallback);
+    switch (tier) {
+      case _AiProfileTier.beginner:
         return pick(
-          zh: '效率优先，业余高段水平',
-          en: 'Fast and efficient, strong amateur level',
-          ja: '効率優先、アマ高段相当',
-          ko: '효율 우선, 아마 고단 수준',
+          zh: '效率优先，适合快速对弈',
+          en: 'Speed-first profile for quick games',
+          ja: '速度重視、短時間対局向け',
+          ko: '속도 우선, 빠른 대국에 적합',
         );
-      case 'intermediate':
+      case _AiProfileTier.intermediate:
         return pick(
-          zh: '兼顾效率与判断力，职业初阶水平',
-          en: 'Balanced speed and judgement, entry pro level',
-          ja: '効率と判断力のバランス、プロ初級相当',
-          ko: '효율과 판단의 균형, 프로 초급 수준',
+          zh: '效率与判断平衡，适合日常训练',
+          en: 'Balanced speed and judgement for practice',
+          ja: '速度と判断のバランス、日常練習向け',
+          ko: '속도와 판단의 균형, 일상 훈련용',
         );
-      case 'professional':
+      case _AiProfileTier.professional:
         return pick(
-          zh: '职业对局速度，职业对局能力',
-          en: 'Professional game speed and strength',
-          ja: 'プロ対局の速度と実力',
-          ko: '프로 대국 속도와 실력',
+          zh: '更强判断与更深搜索，适合进阶训练',
+          en: 'Stronger judgement with deeper search',
+          ja: 'より深い探索と強い判断、上級練習向け',
+          ko: '더 깊은 탐색과 강한 판단, 고급 훈련용',
         );
-      case 'master':
+      case _AiProfileTier.master:
         return pick(
-          zh: '职业高段慢棋水准',
-          en: 'Top professional strength (slow game)',
-          ja: 'プロ高段の持ち時間対局水準',
-          ko: '프로 상위권 장고 수준',
+          zh: '高强度慢思考，对局时间更长',
+          en: 'Top strength with longer thinking time',
+          ja: '高強度の長考設定',
+          ko: '최상위 강도, 더 긴 사고 시간',
         );
-      default:
-        return fallback;
+      case _AiProfileTier.unknown:
+        final String normalized = fallback.trim();
+        if (normalized.isNotEmpty) {
+          return normalized;
+        }
+        return id;
     }
   }
 }
