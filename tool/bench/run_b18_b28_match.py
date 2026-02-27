@@ -167,7 +167,10 @@ def query_self_winrate(engine: GtpEngine, own_color: str) -> float | None:
 
 def main() -> int:
     repo = Path("/Users/caozheng/mastergo")
-    katago_bin = repo / "assets/native/ios/simulator-arm64/katago"
+    katago_bin = (
+        repo
+        / "ios/Frameworks/KataGo.xcframework/ios-arm64-simulator/KataGo.framework/KataGo"
+    )
     config_path = repo / "tool/bench/katago_gtp_benchmark.cfg"
     b28_model = repo / "android/katagomodel/src/main/assets/models/katago/standard.bin.gz"
     b18_model = (

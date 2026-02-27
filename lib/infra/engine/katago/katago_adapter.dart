@@ -96,6 +96,10 @@ class PlatformKatagoAdapter implements KatagoAdapter {
   final KatagoModelRepository _modelRepository;
   KatagoModel? _activeModel;
   bool _started = false;
+  DateTime? _lastAutoRestartAt;
+  int _autoRestartBurst = 0;
+  static const Duration _autoRestartWindow = Duration(seconds: 20);
+  static const int _maxAutoRestartsPerWindow = 2;
 
   @override
   Future<void> ensureStarted() async {
@@ -122,30 +126,58 @@ class PlatformKatagoAdapter implements KatagoAdapter {
         prepareResult['modelPath'] as String? ?? model.assetPath;
     debugPrint('[MasterGo/KatagoAdapter] prepareModel path=$preparedModelPath');
 
-    await _channel.invokeMethod<void>('startEngine', <String, Object?>{
-      'modelPath': preparedModelPath,
-      'configAssetPath': 'assets/config/katago_analysis.cfg',
-    });
+    try {
+      await _channel.invokeMethod<void>('startEngine', <String, Object?>{
+        'modelPath': preparedModelPath,
+        'configAssetPath': 'assets/config/katago_analysis.cfg',
+      });
+    } on PlatformException catch (e) {
+      debugPrint(
+        '[MasterGo/KatagoAdapter] startEngine PlatformException '
+        'code=${e.code} message=${e.message} details=${e.details}',
+      );
+      final String msg = e.message ?? '';
+      if (e.code == 'START_ENGINE_FAILED' &&
+          (msg.contains('Permission denied') ||
+              msg.contains('Operation not permitted'))) {
+        throw PlatformException(
+          code: 'IOS_EXEC_NOT_ALLOWED',
+          message:
+              'iOS sandbox blocks spawning external executables from app bundle. '
+              'KataGo must run in-process (library API), not via posix_spawn.',
+          details: e.details,
+        );
+      }
+      rethrow;
+    }
     debugPrint('[MasterGo/KatagoAdapter] startEngine returned success');
-
-    // Warm up once so the first real user query is not penalized by model cold start.
-    await _channel
-        .invokeMapMethod<dynamic, dynamic>('analyzeOnce', <String, Object?>{
-          'queryId': 'warmup-${DateTime.now().millisecondsSinceEpoch}',
-          'boardSize': 9,
-          'ruleset': 'chinese',
-          'komi': 7.5,
-          'maxVisits': 1,
-          'thinkingTimeMs': 50,
-          'moves': const <String>[],
-          'initialStones': const <String>[],
-          'modelId': model.id,
-          'timeoutMs': 30000,
-        });
-    debugPrint('[MasterGo/KatagoAdapter] warmup analyzeOnce completed');
 
     _activeModel = model;
     _started = true;
+    // Warmup is best-effort: it should not block engine availability.
+    try {
+      await _channel
+          .invokeMapMethod<dynamic, dynamic>('analyzeOnce', <String, Object?>{
+            'queryId': 'warmup-${DateTime.now().millisecondsSinceEpoch}',
+            'boardSize': 9,
+            'ruleset': 'chinese',
+            'komi': 7.5,
+            'maxVisits': 20,
+            'thinkingTimeMs': 200,
+            'moves': const <String>[],
+            'initialStones': const <String>[],
+            'modelId': model.id,
+            'timeoutMs': 30000,
+          });
+      debugPrint('[MasterGo/KatagoAdapter] warmup analyzeOnce completed');
+    } on PlatformException catch (e) {
+      debugPrint(
+        '[MasterGo/KatagoAdapter] warmup skipped '
+        'code=${e.code} message=${e.message}',
+      );
+    } catch (e) {
+      debugPrint('[MasterGo/KatagoAdapter] warmup skipped error: $e');
+    }
     debugPrint('[MasterGo/KatagoAdapter] ensureStarted completed');
   }
 
@@ -165,22 +197,93 @@ class PlatformKatagoAdapter implements KatagoAdapter {
     try {
       return await _analyzeOnce(request);
     } catch (e) {
+      if (e is PlatformException) {
+        debugPrint(
+          '[MasterGo/KatagoAdapter] analyze PlatformException '
+          'code=${e.code} message=${e.message} details=${e.details}',
+        );
+      } else {
+        debugPrint('[MasterGo/KatagoAdapter] analyze error: $e');
+      }
       if (e is PlatformException && e.code == 'ENGINE_TIMEOUT') {
         rethrow;
       }
+      if (e is PlatformException &&
+          (e.code == 'IOS_EXEC_NOT_ALLOWED' ||
+              e.code == 'START_ENGINE_FAILED' ||
+              e.code == 'ENGINE_UNEXPECTED_RESPONSE' ||
+              e.code == 'ENGINE_RESPONSE_ERROR' ||
+              e.code == 'BAD_ARGS')) {
+        // Fatal startup class of errors should not trigger automatic restart loops.
+        rethrow;
+      }
+      if (!_shouldAutoRestart(e)) {
+        if (e is PlatformException) {
+          debugPrint(
+            '[MasterGo/KatagoAdapter] auto-restart suppressed '
+            'code=${e.code} burst=$_autoRestartBurst',
+          );
+        }
+        rethrow;
+      }
       _started = false;
+      _markAutoRestart();
       await ensureStarted();
       return _analyzeOnce(request);
     }
   }
 
+  bool _shouldAutoRestart(Object error) {
+    if (error is PlatformException) {
+      const Set<String> recoverableCodes = <String>{
+        'ENGINE_NOT_RUNNING',
+        'ANALYZE_FAILED',
+        'ENGINE_NO_RESULTS',
+      };
+      if (!recoverableCodes.contains(error.code)) {
+        return false;
+      }
+    }
+    final DateTime now = DateTime.now();
+    if (_lastAutoRestartAt == null ||
+        now.difference(_lastAutoRestartAt!) > _autoRestartWindow) {
+      _autoRestartBurst = 0;
+      return true;
+    }
+    return _autoRestartBurst < _maxAutoRestartsPerWindow;
+  }
+
+  void _markAutoRestart() {
+    final DateTime now = DateTime.now();
+    if (_lastAutoRestartAt == null ||
+        now.difference(_lastAutoRestartAt!) > _autoRestartWindow) {
+      _autoRestartBurst = 1;
+    } else {
+      _autoRestartBurst += 1;
+    }
+    _lastAutoRestartAt = now;
+  }
+
   Future<KatagoAnalyzeResult> _analyzeOnce(KatagoAnalyzeRequest request) async {
     await ensureStarted();
     final String initialPlayer = request.gameSetup.startingPlayer == StoneColor.black ? 'B' : 'W';
+    final int boardSize = request.gameSetup.boardSize.clamp(2, 25);
+    if (request.gameSetup.boardSize != boardSize) {
+      debugPrint(
+        '[MasterGo/KatagoAdapter] analyzeOnce boardSize clamped '
+        '${request.gameSetup.boardSize} -> $boardSize',
+      );
+    }
+    debugPrint(
+      '[MasterGo/KatagoAdapter] analyzeOnce req queryId=${request.queryId} '
+      'board=$boardSize moves=${request.moves.length} '
+      'initialStones=${request.initialStones.length} maxVisits=${request.profile.maxVisits} '
+      'thinkingMs=${request.profile.thinkingTimeMs}',
+    );
     final Map<dynamic, dynamic>? response = await _channel
         .invokeMapMethod<dynamic, dynamic>('analyzeOnce', <String, Object?>{
           'queryId': request.queryId,
-          'boardSize': request.gameSetup.boardSize,
+          'boardSize': boardSize,
           'initialPlayer': initialPlayer,
           'ruleset': request.rules.ruleset,
           'komi': request.rules.komi,
@@ -193,8 +296,20 @@ class PlatformKatagoAdapter implements KatagoAdapter {
           'includeOwnership': request.includeOwnership,
         });
     if (response == null) {
+      debugPrint('[MasterGo/KatagoAdapter] analyzeOnce response is null');
       throw StateError('KataGo analyzeOnce returned null');
     }
+
+    final String bestMove = response['bestMove'] as String? ?? 'pass';
+    final double winrate = (response['winrate'] as num?)?.toDouble() ?? 0.5;
+    final double scoreLead = (response['scoreLead'] as num?)?.toDouble() ?? 0.0;
+    final int? nativeReceived = (response['_debugNativeMovesReceived'] as num?)?.toInt();
+    final int? nativeParsed = (response['_debugNativeMovesParsed'] as num?)?.toInt();
+    debugPrint(
+      '[MasterGo/KatagoAdapter] analyzeOnce res queryId=${response['queryId']} '
+      'bestMove=$bestMove winrate=${winrate.toStringAsFixed(3)} scoreLead=${scoreLead.toStringAsFixed(1)}'
+      '${nativeReceived != null && nativeParsed != null ? " nativeMoves=$nativeReceived->$nativeParsed" : ""}',
+    );
 
     final List<KatagoMoveCandidate> topCandidates = _extractTopCandidates(
       response,
@@ -281,6 +396,7 @@ class PlatformKatagoAdapter implements KatagoAdapter {
 
   @override
   Future<void> shutdown() async {
+    debugPrint('[MasterGo/KatagoAdapter] shutdown');
     await _channel.invokeMethod<void>('shutdownEngine');
     _started = false;
   }

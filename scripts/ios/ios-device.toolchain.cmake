@@ -1,0 +1,22 @@
+# Minimal CMake toolchain for iOS device (iphoneos arm64).
+# Used by build_katago_xcframework.sh to build the device slice.
+
+set(CMAKE_SYSTEM_NAME iOS)
+set(CMAKE_SYSTEM_PROCESSOR arm64)
+set(CMAKE_OSX_ARCHITECTURES "arm64")
+
+if(NOT DEFINED CMAKE_OSX_SYSROOT)
+  execute_process(COMMAND xcrun -sdk iphoneos --show-sdk-path OUTPUT_VARIABLE CMAKE_OSX_SYSROOT OUTPUT_STRIP_TRAILING_WHITESPACE)
+endif()
+if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0")
+endif()
+
+# Compilers for iphoneos
+execute_process(COMMAND xcrun -sdk iphoneos -find clang  OUTPUT_VARIABLE CMAKE_C_COMPILER OUTPUT_STRIP_TRAILING_WHITESPACE)
+execute_process(COMMAND xcrun -sdk iphoneos -find clang++ OUTPUT_VARIABLE CMAKE_CXX_COMPILER OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+set(CMAKE_FIND_ROOT_PATH ${CMAKE_OSX_SYSROOT})
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)

@@ -80,7 +80,6 @@ flutter:
     - assets/master_games/
     - assets/sounds/
     - assets/models/katago/
-    - assets/native/ios/simulator-arm64/katago
 
   # To add assets to your application, add an assets section, like this:
   # assets:

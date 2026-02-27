@@ -47,6 +47,5 @@ app.*.map.json
 
 # Local AI engine artifacts (too large for source control)
 /assets/models/katago/
-/assets/native/ios/simulator-arm64/katago
 /android/app/src/main/jniLibs/*/libkatago.so
 /third_party/
