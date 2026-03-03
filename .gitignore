@@ -50,5 +50,8 @@ app.*.map.json
 /android/app/src/main/jniLibs/*/libkatago.so
 /third_party/
 
+# iOS KataGo static lib XCFramework (>100MB per slice; build with scripts/ios/build_katago_xcframework.sh)
+/ios/Frameworks/KataGo.xcframework/
+
 # Bench results (may contain local paths / usernames)
 /tool/bench/results/
