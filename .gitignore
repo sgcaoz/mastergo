@@ -49,3 +49,6 @@ app.*.map.json
 /assets/models/katago/
 /android/app/src/main/jniLibs/*/libkatago.so
 /third_party/
+
+# Bench results (may contain local paths / usernames)
+/tool/bench/results/
