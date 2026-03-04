@@ -47,6 +47,10 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Camera is used to capture the Go board for position recognition.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Photo library is used to select board images for position recognition (识谱).</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save board or game images to photo library.</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -67,5 +71,9 @@
 			</array>
 		</dict>
 	</array>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>UISupportsOpeningDocumentsInPlace</key>
+	<true/>
 </dict>
 </plist>

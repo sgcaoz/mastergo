@@ -31,6 +31,27 @@ val hasReleaseSigning =
     !releaseKeyAlias.isNullOrEmpty() &&
     !releaseKeyPassword.isNullOrEmpty()
 
+// Ensure release/Play builds ship KataGo for all supported ABIs.
+val requiredAbis = listOf("arm64-v8a", "armeabi-v7a")
+tasks.register("checkKatagoForRelease") {
+    doLast {
+        val jniLibsDir = file("src/main/jniLibs")
+        val missing = requiredAbis.filter { abi ->
+            !file("$jniLibsDir/$abi/libkatago.so").exists()
+        }
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                "Release build requires libkatago.so for all ABIs. Missing: ${missing.joinToString()}.\n" +
+                "Run once: ABI=all ./scripts/android/build_katago_android.sh"
+            )
+        }
+    }
+}
+project.afterEvaluate {
+    tasks.findByName("bundleRelease")?.dependsOn("checkKatagoForRelease")
+    tasks.findByName("assembleRelease")?.dependsOn("checkKatagoForRelease")
+}
+
 android {
     namespace = "com.boringtime.mastergo"
     compileSdk = flutter.compileSdkVersion
@@ -46,14 +67,14 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.boringtime.mastergo"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     signingConfigs {
@@ -82,6 +103,13 @@ android {
         }
     }
 
+    // Required: KataGo is run as a subprocess (ProcessBuilder), not loaded via System.loadLibrary().
+    // Without this, AAB/Play installs do not extract .so to nativeLibraryDir, so the binary path does not exist.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 dependencies {

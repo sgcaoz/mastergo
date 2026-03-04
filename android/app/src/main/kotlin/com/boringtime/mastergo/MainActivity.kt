@@ -198,14 +198,12 @@ class MainActivity : FlutterActivity() {
                 mainHandler.post {
                     result.error(
                         "BINARY_NOT_FOUND",
-                        "KataGo executable not found in nativeLibraryDir",
+                        "KataGo executable not found in jniLibs",
                         mapOf(
                             "nativeLibPath" to binaryFile.absolutePath,
                             "nativeLibraryDir" to applicationInfo.nativeLibraryDir,
-                            "exists" to binaryFile.exists(),
-                            "canExecute" to binaryFile.canExecute(),
                             "abi" to Build.SUPPORTED_ABIS.joinToString(","),
-                            "note" to "Put katago into android/app/src/main/jniLibs/<abi>/libkatago.so"
+                            "note" to "Run ./scripts/android/build_katago_android.sh before building"
                         )
                     )
                 }
@@ -410,9 +408,9 @@ class MainActivity : FlutterActivity() {
         )
     }
 
+    /** KataGo executable: only from jniLibs → nativeLibraryDir/libkatago.so. Build with scripts/android/build_katago_android.sh first. */
     private fun resolveKatagoExecutablePath(): File {
-        val packagedLib = File(applicationInfo.nativeLibraryDir, "libkatago.so")
-        return packagedLib
+        return File(applicationInfo.nativeLibraryDir, "libkatago.so")
     }
 
     private fun sha256(file: File): String {

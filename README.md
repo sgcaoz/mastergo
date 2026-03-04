@@ -29,25 +29,20 @@ Flutter-based Go app scaffold with three core modules:
   `dart run tool/seed_master_db.dart`  
   发版或增删名局后需重新运行并提交新的 `mastergo_seed.db`。
 
-## Build (Way A)
+## Android KataGo（测试与上线统一）
 
-Rebuild Android KataGo binary locally and bundle into jniLibs:
+**唯一方式**：引擎只来自 **jniLibs** → 运行时即 `nativeLibraryDir/libkatago.so`。无兜底、无 assets 引擎资源。
 
-```bash
-./scripts/android/build_katago_android.sh
-```
+1. **构建前**（本地或 CI/Play 打包前）必须执行：
+   - 仅 64 位：`./scripts/android/build_katago_android.sh`（默认 `arm64-v8a`）
+   - **常见芯片兼容（推荐）**：`ABI=all ./scripts/android/build_katago_android.sh`，会构建 `arm64-v8a` 与 `armeabi-v7a`
+2. **Release 构建**：Gradle 会检查 jniLibs 中是否**同时存在** `arm64-v8a` 与 `armeabi-v7a` 的 `libkatago.so`，缺一则构建失败。
 
-Optional environment overrides:
-- `ABI` (default `arm64-v8a`)
-- `ANDROID_PLATFORM` (default `24`)
-- `NDK_VERSION` (default `28.2.13676358`)
+可选环境变量：`ABI`（`arm64-v8a` / `armeabi-v7a` / `all`）、`ANDROID_PLATFORM`（默认 `24`）、`NDK_VERSION`。
 
 ## Runtime behavior
 
-At runtime, Android bridge starts directly from:
-- `<nativeLibraryDir>/libkatago.so`
-
-If the binary is absent for the current ABI, engine startup returns `BINARY_NOT_FOUND`.
+At runtime, Android uses only `<nativeLibraryDir>/libkatago.so` (from jniLibs). Build both ABIs with `ABI=all ./scripts/android/build_katago_android.sh`; release build requires `arm64-v8a` and `armeabi-v7a`. If the .so is missing, engine startup returns `BINARY_NOT_FOUND`.
 
 iOS currently supports model asset preparation and integrity check, but does not launch KataGo yet.
 To enable iOS playing/analysis, link an in-process native engine framework and implement bridge calls.
