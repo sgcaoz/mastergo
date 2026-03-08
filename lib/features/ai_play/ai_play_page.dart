@@ -26,6 +26,43 @@ class AIPlayPage extends StatefulWidget {
 
   final String? initialRestoreRecordId;
 
+  /// 从打谱/识谱进入续下：当前玩家先下，下一步 AI 下；仅新着法>20 步时记入本机对局。
+  /// [prefixWinrates] 打谱续下时传入原谱胜率（手数 -> 黑方胜率），会合并进对局胜率曲线并随记录保存。
+  static Future<void> pushContinuePlay(
+    BuildContext context, {
+    required GoGameState initialGameState,
+    required AnalysisProfile profile,
+    required GameRules rules,
+    int prefixMoveCount = 0,
+    double? originalKomi,
+    String? originalRuleset,
+    List<GoPoint>? originalInitialBlack,
+    List<GoPoint>? originalInitialWhite,
+    Map<int, double>? prefixWinrates,
+  }) async {
+    final KatagoAdapter adapter = PlatformKatagoAdapter();
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => _AIBattlePage(
+          adapter: adapter,
+          profile: profile,
+          boardSize: initialGameState.boardSize,
+          handicap: 0,
+          randomFirst: false,
+          rules: rules,
+          initialGameState: initialGameState,
+          continuationPrefixMoveCount: prefixMoveCount,
+          continuationOriginalKomi: originalKomi,
+          continuationOriginalRuleset: originalRuleset,
+          continuationOriginalInitialBlack: originalInitialBlack,
+          continuationOriginalInitialWhite: originalInitialWhite,
+          continuationPrefixWinrates: prefixWinrates,
+        ),
+      ),
+    );
+    unawaited(adapter.shutdown());
+  }
+
   @override
   State<AIPlayPage> createState() => _AIPlayPageState();
 }
@@ -358,6 +395,7 @@ class _AIPlayPageState extends State<AIPlayPage> {
   }
 }
 
+/// 续下模式：从打谱/识谱进入，保留前缀着法（打谱）或仅当前局面（识谱），仅新着法>20步时记入本机对局。
 class _AIBattlePage extends StatefulWidget {
   const _AIBattlePage({
     required this.adapter,
@@ -367,6 +405,13 @@ class _AIBattlePage extends StatefulWidget {
     required this.randomFirst,
     required this.rules,
     this.preferredRestoreRecordId,
+    this.initialGameState,
+    this.continuationPrefixMoveCount = 0,
+    this.continuationOriginalKomi,
+    this.continuationOriginalRuleset,
+    this.continuationOriginalInitialBlack,
+    this.continuationOriginalInitialWhite,
+    this.continuationPrefixWinrates,
   });
 
   final KatagoAdapter adapter;
@@ -376,6 +421,14 @@ class _AIBattlePage extends StatefulWidget {
   final bool randomFirst;
   final GameRules rules;
   final String? preferredRestoreRecordId;
+  final GoGameState? initialGameState;
+  final int continuationPrefixMoveCount;
+  final double? continuationOriginalKomi;
+  final String? continuationOriginalRuleset;
+  final List<GoPoint>? continuationOriginalInitialBlack;
+  final List<GoPoint>? continuationOriginalInitialWhite;
+  /// 打谱续下时原谱的胜率（手数 -> 黑方胜率），合并进 _winrateByTurn 并随记录保存。
+  final Map<int, double>? continuationPrefixWinrates;
 
   @override
   State<_AIBattlePage> createState() => _AIBattlePageState();
@@ -480,6 +533,16 @@ class _AIBattlePageState extends State<_AIBattlePage>
     );
   }
 
+  bool get _isContinuation =>
+      widget.initialGameState != null || widget.continuationPrefixMoveCount > 0;
+
+  int get _newMoveCount {
+    final GoGameState? game = _game;
+    if (game == null) return 0;
+    return (game.moves.length - widget.continuationPrefixMoveCount)
+        .clamp(0, game.moves.length);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -561,45 +624,61 @@ class _AIBattlePageState extends State<_AIBattlePage>
   void _initializeGame({bool shouldPersist = true}) {
     _recordId = null;
     _recordCreatedAtMs = null;
-    if (widget.handicap > 0) {
-      // Handicap means AI gives stones to player, so player is fixed to black.
-      _playerStone = GoStone.black;
+
+    final GoGameState? fromContinuation = widget.initialGameState;
+    if (fromContinuation != null) {
+      _playerStone = fromContinuation.toPlay;
+      _aiStone = _playerStone.opposite();
+      _history
+        ..clear()
+        ..add(fromContinuation);
+      _game = fromContinuation;
+      _handicapStones = <GoPoint>[];
     } else {
-      _playerStone = widget.randomFirst && Random().nextBool()
-          ? GoStone.white
-          : GoStone.black;
+      if (widget.handicap > 0) {
+        _playerStone = GoStone.black;
+      } else {
+        _playerStone = widget.randomFirst && Random().nextBool()
+            ? GoStone.white
+            : GoStone.black;
+      }
+      _aiStone = _playerStone.opposite();
+      final List<GoPoint> handicap = _buildHandicapPoints(
+        widget.boardSize,
+        widget.handicap,
+      );
+      final List<List<GoStone?>> board = List<List<GoStone?>>.generate(
+        widget.boardSize,
+        (_) => List<GoStone?>.filled(widget.boardSize, null),
+      );
+      for (final GoPoint p in handicap) {
+        board[p.y][p.x] = GoStone.black;
+      }
+      final GoStone toPlay =
+          handicap.isEmpty ? GoStone.black : GoStone.white;
+      final GoGameState initial = GoGameState(
+        boardSize: widget.boardSize,
+        board: board,
+        toPlay: toPlay,
+      );
+      _history
+        ..clear()
+        ..add(initial);
+      _game = initial;
+      _handicapStones = handicap;
     }
-    _aiStone = _playerStone.opposite();
 
-    final List<GoPoint> handicap = _buildHandicapPoints(
-      widget.boardSize,
-      widget.handicap,
-    );
-    final List<List<GoStone?>> board = List<List<GoStone?>>.generate(
-      widget.boardSize,
-      (_) => List<GoStone?>.filled(widget.boardSize, null),
-    );
-    for (final GoPoint p in handicap) {
-      board[p.y][p.x] = GoStone.black;
-    }
-    final GoStone toPlay = handicap.isEmpty ? GoStone.black : GoStone.white;
-
-    final GoGameState initial = GoGameState(
-      boardSize: widget.boardSize,
-      board: board,
-      toPlay: toPlay,
-    );
-    _history
-      ..clear()
-      ..add(initial);
-    _game = initial;
-    _handicapStones = handicap;
     _finalScore = null;
     _finalResultTextFromAnalysis = null;
     _resignResultText = null;
     _pendingPoint = null;
     _blackWinrate = null;
     _winrateByTurn.clear();
+    if (fromContinuation != null &&
+        widget.continuationPrefixWinrates != null &&
+        widget.continuationPrefixWinrates!.isNotEmpty) {
+      _winrateByTurn.addAll(widget.continuationPrefixWinrates!);
+    }
     _hintSummary = null;
     _hintLoading = false;
     _ownershipLoading = false;
@@ -607,6 +686,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
     _whiteBase = Duration.zero;
     _activeClockStone = null;
     _activeClockStartedAt = null;
+    final GoStone toPlay = _game!.toPlay;
     _startClockFor(toPlay);
     _status = _buildOpeningStatus(toPlay);
 
@@ -647,6 +727,47 @@ class _AIBattlePageState extends State<_AIBattlePage>
     final int mm = total ~/ 60;
     final int ss = total % 60;
     return '${mm.toString().padLeft(2, '0')}:${ss.toString().padLeft(2, '0')}';
+  }
+
+  /// 续下时：initialTokens 来自开局棋盘，moveTokens 仅新着法；否则来自 handicap + 全部 moves。
+  (List<String> initial, List<String> moves) _kataGoTokens() {
+    final GoGameState? game = _game;
+    if (game == null) return (<String>[], <String>[]);
+    return _kataGoTokensForState(game);
+  }
+
+  (List<String> initial, List<String> moves) _kataGoTokensForState(
+    GoGameState state,
+  ) {
+    if (_isContinuation && _history.isNotEmpty) {
+      final GoGameState start = _history.first;
+      final List<String> initial = <String>[];
+      for (int y = 0; y < start.boardSize; y++) {
+        for (int x = 0; x < start.boardSize; x++) {
+          final GoStone? s = start.board[y][x];
+          if (s != null) {
+            initial.add(
+              '${s.sgfColor}:${GoMove(player: s, point: GoPoint(x, y)).toGtp(start.boardSize)}',
+            );
+          }
+        }
+      }
+      final List<String> moves = state.moves
+          .skip(widget.continuationPrefixMoveCount)
+          .map((GoMove m) => m.toProtocolToken(widget.boardSize))
+          .toList();
+      return (initial, moves);
+    }
+    final List<String> initial = _handicapStones
+        .map(
+          (GoPoint p) =>
+              'B:${GoMove(player: GoStone.black, point: p).toGtp(widget.boardSize)}',
+        )
+        .toList();
+    final List<String> moves = state.moves
+        .map((GoMove m) => m.toProtocolToken(widget.boardSize))
+        .toList();
+    return (initial, moves);
   }
 
   Future<void> _onBoardTap(GoPoint point) async {
@@ -818,15 +939,8 @@ class _AIBattlePageState extends State<_AIBattlePage>
                   ));
     });
     try {
-      final List<String> moveTokens = _game!.moves
-          .map((GoMove m) => m.toProtocolToken(widget.boardSize))
-          .toList();
-      final List<String> initialTokens = _handicapStones
-          .map(
-            (GoPoint p) =>
-                'B:${GoMove(player: GoStone.black, point: p).toGtp(widget.boardSize)}',
-          )
-          .toList();
+      final (List<String> initialTokens, List<String> moveTokens) =
+          _kataGoTokens();
 
       final KatagoAnalyzeResult analyzed = await widget.adapter.analyze(
         KatagoAnalyzeRequest(
@@ -957,15 +1071,8 @@ class _AIBattlePageState extends State<_AIBattlePage>
       );
     });
     try {
-      final List<String> moveTokens = _game!.moves
-          .map((GoMove m) => m.toProtocolToken(widget.boardSize))
-          .toList();
-      final List<String> initialTokens = _handicapStones
-          .map(
-            (GoPoint p) =>
-                'B:${GoMove(player: GoStone.black, point: p).toGtp(widget.boardSize)}',
-          )
-          .toList();
+      final (List<String> initialTokens, List<String> moveTokens) =
+          _kataGoTokens();
       final AnalysisProfile profile = _effectiveProfileForTurn(
         _game!.moves.length,
       );
@@ -1343,16 +1450,42 @@ class _AIBattlePageState extends State<_AIBattlePage>
         (_finalScore != null ? (_finalResultTextFromAnalysis ?? '?') : '?');
     sb.write('(;GM[1]FF[4]');
     sb.write('SZ[${widget.boardSize}]');
-    sb.write('KM[${_rules.komi}]');
-    sb.write('RU[${_rules.ruleset}]');
-    sb.write('PB[Player]');
-    sb.write('PW[MasterGo AI]');
-    if (widget.handicap > 0) {
-      sb.write('HA[${widget.handicap}]');
-      for (final GoPoint p in _handicapStones) {
+    final bool useOriginalRoot = widget.continuationOriginalKomi != null;
+    if (useOriginalRoot) {
+      sb.write('KM[${widget.continuationOriginalKomi}]');
+      sb.write('RU[${widget.continuationOriginalRuleset ?? _rules.ruleset}]');
+      for (final GoPoint p in widget.continuationOriginalInitialBlack ?? <GoPoint>[]) {
         sb.write('AB[${_toSgfCoord(p)}]');
       }
+      for (final GoPoint p in widget.continuationOriginalInitialWhite ?? <GoPoint>[]) {
+        sb.write('AW[${_toSgfCoord(p)}]');
+      }
+    } else {
+      sb.write('KM[${_rules.komi}]');
+      sb.write('RU[${_rules.ruleset}]');
+      if (_isContinuation && _history.isNotEmpty) {
+        final GoGameState start = _history.first;
+        for (int y = 0; y < start.boardSize; y++) {
+          for (int x = 0; x < start.boardSize; x++) {
+            final GoStone? s = start.board[y][x];
+            if (s != null) {
+              if (s == GoStone.black) {
+                sb.write('AB[${_toSgfCoord(GoPoint(x, y))}]');
+              } else {
+                sb.write('AW[${_toSgfCoord(GoPoint(x, y))}]');
+              }
+            }
+          }
+        }
+      } else if (widget.handicap > 0) {
+        sb.write('HA[${widget.handicap}]');
+        for (final GoPoint p in _handicapStones) {
+          sb.write('AB[${_toSgfCoord(p)}]');
+        }
+      }
     }
+    sb.write('PB[Player]');
+    sb.write('PW[MasterGo AI]');
     sb.write('RE[$result]');
     for (final GoMove move in _game?.moves ?? <GoMove>[]) {
       final String color = move.player == GoStone.black ? 'B' : 'W';
@@ -1371,9 +1504,29 @@ class _AIBattlePageState extends State<_AIBattlePage>
     return '${letters[p.x]}${letters[p.y]}';
   }
 
+  /// 拍照续下时把开局局面编码进 session，保证记录中有完整开局棋局。
+  /// 同时 _toSgf() 会把开局写入 SGF 根节点 AB/AW，便于导出/重装后仅凭 SGF 恢复开局。
+  List<Map<String, dynamic>> _encodeInitialStonesFromState(GoGameState state) {
+    final List<Map<String, dynamic>> list = <Map<String, dynamic>>[];
+    for (int y = 0; y < state.boardSize; y++) {
+      for (int x = 0; x < state.boardSize; x++) {
+        final GoStone? s = state.board[y][x];
+        if (s != null) {
+          list.add(<String, dynamic>{
+            'player': s.name,
+            'x': x,
+            'y': y,
+          });
+        }
+      }
+    }
+    return list;
+  }
+
   Future<void> _persistSession() async {
     final GoGameState? game = _game;
-    if (game == null) {
+    if (game == null) return;
+    if (_isContinuation && _newMoveCount <= 20) {
       return;
     }
     final int now = DateTime.now().millisecondsSinceEpoch;
@@ -1393,6 +1546,10 @@ class _AIBattlePageState extends State<_AIBattlePage>
           'y': m.point?.y,
         };
       }).toList(),
+      if (_isContinuation &&
+          widget.continuationOriginalKomi == null &&
+          _history.isNotEmpty)
+        'initialStones': _encodeInitialStonesFromState(_history.first),
       'winrateByTurn': _winrateByTurn.map(
         (int k, double v) => MapEntry<String, dynamic>(k.toString(), v),
       ),
@@ -1418,7 +1575,9 @@ class _AIBattlePageState extends State<_AIBattlePage>
     };
     final String id = _recordId ?? _recordRepository.newId(prefix: 'battle');
     _recordId = id;
-    final String source = game.moves.length >= 20
+    final int effectiveMoveCount =
+        _isContinuation ? _newMoveCount : game.moves.length;
+    final String source = effectiveMoveCount > 20
         ? 'battle_local'
         : 'battle_temp';
     final GameRecord record = GameRecord(
@@ -1449,6 +1608,9 @@ class _AIBattlePageState extends State<_AIBattlePage>
   }
 
   Future<bool> _restoreSession() async {
+    if (widget.initialGameState != null) {
+      return false;
+    }
     final String? preferredId = widget.preferredRestoreRecordId;
     if (preferredId != null && preferredId.isNotEmpty) {
       final GameRecord? preferred = await _recordRepository.loadById(
@@ -1526,16 +1688,34 @@ class _AIBattlePageState extends State<_AIBattlePage>
         boardSize,
         (_) => List<GoStone?>.filled(boardSize, null),
       );
-      final List<GoPoint> handicapStones = _buildHandicapPoints(
+      List<GoPoint> handicapStones = _buildHandicapPoints(
         boardSize,
         handicap,
       );
-      for (final GoPoint p in handicapStones) {
-        board[p.y][p.x] = GoStone.black;
+      final List<dynamic>? rawInitialStones =
+          data['initialStones'] as List<dynamic>?;
+      final GoStone toPlay;
+      if (rawInitialStones != null && rawInitialStones.isNotEmpty) {
+        for (final dynamic item in rawInitialStones) {
+          final Map<String, dynamic> s = item as Map<String, dynamic>;
+          final String player = s['player'] as String? ?? 'black';
+          final int? x = (s['x'] as num?)?.toInt();
+          final int? y = (s['y'] as num?)?.toInt();
+          if (x != null && y != null &&
+              x >= 0 && x < boardSize && y >= 0 && y < boardSize) {
+            board[y][x] = player == 'white' ? GoStone.white : GoStone.black;
+          }
+        }
+        handicapStones = <GoPoint>[];
+        toPlay = _playerStone;
+      } else {
+        for (final GoPoint p in handicapStones) {
+          board[p.y][p.x] = GoStone.black;
+        }
+        toPlay = handicapStones.isEmpty
+            ? GoStone.black
+            : GoStone.white;
       }
-      final GoStone toPlay = handicapStones.isEmpty
-          ? GoStone.black
-          : GoStone.white;
       GoGameState state = GoGameState(
         boardSize: boardSize,
         board: board,
@@ -1618,15 +1798,8 @@ class _AIBattlePageState extends State<_AIBattlePage>
   Future<List<_HintPointInfo>> _requestHintPointsForState(
     GoGameState state,
   ) async {
-    final List<String> moveTokens = state.moves
-        .map((GoMove m) => m.toProtocolToken(widget.boardSize))
-        .toList();
-    final List<String> initialTokens = _handicapStones
-        .map(
-          (GoPoint p) =>
-              'B:${GoMove(player: GoStone.black, point: p).toGtp(widget.boardSize)}',
-        )
-        .toList();
+    final (List<String> initialTokens, List<String> moveTokens) =
+        _kataGoTokensForState(state);
     // 提示与当前对局难度一致，直接使用当前档位配置（避免硬编码档位数值）。
     final KatagoAnalyzeResult analyzed = await widget.adapter.analyze(
       KatagoAnalyzeRequest(
@@ -1754,15 +1927,8 @@ class _AIBattlePageState extends State<_AIBattlePage>
 
   /// 对任意局面请求势力/目数分析，供对局中与复盘共用。
   Future<KatagoAnalyzeResult> _requestOwnershipAnalysis(GoGameState state) {
-    final List<String> moveTokens = state.moves
-        .map((GoMove m) => m.toProtocolToken(widget.boardSize))
-        .toList();
-    final List<String> initialTokens = _handicapStones
-        .map(
-          (GoPoint p) =>
-              'B:${GoMove(player: GoStone.black, point: p).toGtp(widget.boardSize)}',
-        )
-        .toList();
+    final (List<String> initialTokens, List<String> moveTokens) =
+        _kataGoTokensForState(state);
     final AnalysisProfile profile = _effectiveProfileForTurn(
       state.moves.length,
     );

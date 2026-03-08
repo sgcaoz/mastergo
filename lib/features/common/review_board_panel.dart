@@ -13,8 +13,9 @@ class ReviewBoardPanel extends StatelessWidget {
     required this.state,
     required this.tryMode,
     required this.hintPoints,
-    required this.onEnterTry,
+    required     this.onEnterTry,
     required this.onExitTry,
+    this.onSaveAsVariation,
     required this.onRequestHint,
     required this.onRequestOwnership,
     this.lastMovePoint,
@@ -47,6 +48,8 @@ class ReviewBoardPanel extends StatelessWidget {
   final VoidCallback onEnterTry;
   /// 结束试下
   final VoidCallback onExitTry;
+  /// 试下时「保存为变化图」；非 null 且在试下时显示按钮
+  final VoidCallback? onSaveAsVariation;
   /// 试下时落子回调；非试下时为 null，棋盘不可点
   final ValueChanged<GoPoint>? onTryPlay;
   /// 请求提示（父层异步请求后更新 hintPoints/hintSummary 并重建）
@@ -113,6 +116,18 @@ class ReviewBoardPanel extends StatelessWidget {
                     : t(zh: '试下', en: 'Try', ja: '試し打ち', ko: '시험 수순'),
               ),
             ),
+            if (tryMode && onSaveAsVariation != null)
+              OutlinedButton(
+                onPressed: onSaveAsVariation,
+                child: Text(
+                  t(
+                    zh: '保存为变化图',
+                    en: 'Save as variation',
+                    ja: '変化図として保存',
+                    ko: '변화도로 저장',
+                  ),
+                ),
+              ),
             OutlinedButton(
               onPressed: hintLoading ? null : onRequestHint,
               child: hintLoading

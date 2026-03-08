@@ -38,7 +38,8 @@ class SgfNode {
   SgfNode({this.move, this.comment, this.moveNumber = 0});
 
   final GoMove? move;
-  final String? comment;
+  /// 节点注释（打谱笔记）。可写，保存时写回 SGF 的 C[]。
+  String? comment;
   final int moveNumber;
   final List<SgfNode> children = <SgfNode>[];
 }

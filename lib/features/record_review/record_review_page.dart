@@ -15,12 +15,14 @@ import 'package:mastergo/application/analysis/game_analysis_service.dart'
     show GameAnalysisService, HintKind, MoveHint;
 import 'package:mastergo/domain/entities/analysis_profile.dart';
 import 'package:mastergo/domain/entities/game_record.dart';
+import 'package:mastergo/domain/entities/game_rules.dart';
 import 'package:mastergo/domain/entities/rule_presets.dart';
 import 'package:mastergo/domain/entities/game_setup.dart';
 import 'package:mastergo/domain/go/go_game.dart';
 import 'package:mastergo/domain/go/go_types.dart';
 import 'package:mastergo/features/ai_play/ai_play_page.dart';
 import 'package:mastergo/domain/sgf/sgf_parser.dart';
+import 'package:mastergo/domain/sgf/sgf_writer.dart';
 import 'package:mastergo/features/common/ownership_result_sheet.dart';
 import 'package:mastergo/features/common/review_board_panel.dart';
 import 'package:mastergo/infra/config/ai_profile_repository.dart';
@@ -220,6 +222,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   final Map<String, Future<List<GameRecord>>> _sourceFutures =
       <String, Future<List<GameRecord>>>{};
   final Map<int, double> _winrates = <int, double>{};
+  bool _isFillingWinrate = false;
   String? _status;
   String? _recordId;
   String _recordSource = 'download';
@@ -246,6 +249,13 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _recordSource == 'import' || // legacy compatibility
       _recordSource == 'download' ||
       _recordSource == 'master';
+
+  /// 当前记录是否可写（本机对局、临时对局、下载的棋谱可保存笔记/变化图）。
+  bool get _canSaveRecord =>
+      _recordId != null &&
+      (_recordSource == 'battle_local' ||
+          _recordSource == 'battle_temp' ||
+          _recordSource == 'download');
 
   String _sgfProp(String sgf, String key) {
     final RegExp reg = RegExp('$key\\[([^\\]]*)\\]');
@@ -943,6 +953,54 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     }
     unawaited(_loadInitialRecordWinrates());
     unawaited(_loadReviewProfiles());
+    if (widget.initialRecordId != null && widget.initialSgfContent != null) {
+      unawaited(_applyPhotoContinuationInitialStonesIfNeeded());
+    }
+  }
+
+  /// 拍照续下记录：复盘时用 session 里的 initialStones 补全根节点局面，保证显示原始位置。
+  /// 若重装后仅通过导入 SGF 恢复，开局需依赖 SGF 中的 AB/AW（保存时已写入）。
+  Future<void> _applyPhotoContinuationInitialStonesIfNeeded() async {
+    if (_recordId == null || _sgf == null) return;
+    final GameRecord? rec = await _recordRepository.loadById(_recordId!);
+    if (rec == null || rec.sessionJson.isEmpty) return;
+    try {
+      final Map<String, dynamic> data =
+          jsonDecode(rec.sessionJson) as Map<String, dynamic>;
+      final List<dynamic>? raw = data['initialStones'] as List<dynamic>?;
+      if (raw == null || raw.isEmpty) return;
+      final int boardSize = _sgf!.boardSize;
+      final List<GoPoint> black = <GoPoint>[];
+      final List<GoPoint> white = <GoPoint>[];
+      for (final dynamic item in raw) {
+        final Map<String, dynamic> s = item as Map<String, dynamic>;
+        final String player = s['player'] as String? ?? 'black';
+        final int? x = (s['x'] as num?)?.toInt();
+        final int? y = (s['y'] as num?)?.toInt();
+        if (x == null || y == null ||
+            x < 0 || x >= boardSize || y < 0 || y >= boardSize) continue;
+        if (player == 'white') {
+          white.add(GoPoint(x, y));
+        } else {
+          black.add(GoPoint(x, y));
+        }
+      }
+      if (black.isEmpty && white.isEmpty) return;
+      if (!mounted) return;
+      setState(() {
+        _sgf = SgfGame(
+          boardSize: _sgf!.boardSize,
+          komi: _sgf!.komi,
+          rules: _sgf!.rules,
+          root: _sgf!.root,
+          initialBlackStones: black,
+          initialWhiteStones: white,
+          blackName: _sgf!.blackName,
+          whiteName: _sgf!.whiteName,
+          gameName: _sgf!.gameName,
+        );
+      });
+    } catch (_) {}
   }
 
   Future<void> _loadReviewProfiles() async {
@@ -1294,6 +1352,95 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     return state;
   }
 
+  /// 打谱续下：默认沿用原谱规则，只选难度；当前玩家先下，下一步 AI 下。
+  Future<void> _openContinuePlay() async {
+    final GoGameState? state = _stateAtPath();
+    if (state == null || _sgf == null) {
+      return;
+    }
+    final List<AnalysisProfile> profiles = _reviewProfiles.isNotEmpty
+        ? _reviewProfiles
+        : <AnalysisProfile>[_fallbackReviewProfile];
+    int selectedIndex = _reviewProfileIndex.clamp(0, profiles.length - 1);
+    if (!mounted) return;
+    final int? chosen = await showDialog<int>(
+      context: context,
+      builder: (BuildContext context) {
+        int index = selectedIndex;
+        return StatefulBuilder(
+          builder: (BuildContext context, void Function(void Function()) setDialogState) {
+            return AlertDialog(
+              title: Text(
+                _t(zh: '续下', en: 'Continue Play', ja: '続き対局', ko: '계속 대국'),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      _t(
+                        zh: '选择 AI 难度（规则沿用当前棋谱）',
+                        en: 'Select AI strength (rules from current SGF)',
+                        ja: 'AI強さを選択（ルールは棋譜に従う）',
+                        ko: 'AI 난이도 선택 (규칙은 현재 기보 따름)',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButton<int>(
+                      value: index.clamp(0, profiles.length - 1),
+                      isExpanded: true,
+                      items: List<DropdownMenuItem<int>>.generate(
+                        profiles.length,
+                        (int i) => DropdownMenuItem<int>(
+                          value: i,
+                          child: Text(
+                            '${_s.aiProfileName(profiles[i].id, profiles[i].name)} (${profiles[i].maxVisits})',
+                          ),
+                        ),
+                      ),
+                      onChanged: (int? value) {
+                        if (value != null) {
+                          setDialogState(() => index = value);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(_t(zh: '取消', en: 'Cancel', ja: 'キャンセル', ko: '취소')),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(index),
+                  child: Text(_t(zh: '开始', en: 'Start', ja: '開始', ko: '시작')),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (chosen == null || !mounted) return;
+    selectedIndex = chosen.clamp(0, profiles.length - 1);
+    final AnalysisProfile profile = profiles[selectedIndex];
+    final GameRules rules = rulePresetFromString(_sgf!.rules).toGameRules(komi: _sgf!.komi);
+    await AIPlayPage.pushContinuePlay(
+      context,
+      initialGameState: state,
+      profile: profile,
+      rules: rules,
+      prefixMoveCount: state.moves.length,
+      originalKomi: _sgf!.komi,
+      originalRuleset: _sgf!.rules,
+      originalInitialBlack: _sgf!.initialBlackStones,
+      originalInitialWhite: _sgf!.initialWhiteStones,
+      prefixWinrates: _winrates.isEmpty ? null : Map<int, double>.from(_winrates),
+    );
+  }
+
   /// 可选：若本谱来自对局且保存了更高 visits，分析当前胜率时可沿用并延长超时。
   AnalysisProfile? _gameAnalysisProfile;
 
@@ -1314,6 +1461,20 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   int _timeoutMsForReviewProfile(AnalysisProfile profile) {
     return profile.thinkingTimeMs * 2;
   }
+
+  /// 胜率补全固定使用快速档位（效率优先），与当前选中的复盘档位无关。
+  AnalysisProfile _profileForWinrateFill() {
+    for (final AnalysisProfile p in _reviewProfiles) {
+      if (p.id == 'beginner') return p;
+    }
+    return _reviewProfiles.isNotEmpty
+        ? _reviewProfiles.first
+        : _fallbackReviewProfile;
+  }
+
+  /// 胜率补全不设单步超时，避免长棋谱中途被判定超时（传较大值给引擎）。
+  static const int _winrateFillTimeoutMs = 86400000; // 24h
+
 
   Future<void> _analyzeCurrentWinrate() async {
     if (_sgf == null || _analyzing) {
@@ -1397,6 +1558,158 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       if (mounted) {
         setState(() {
           _analyzing = false;
+        });
+      }
+    }
+  }
+
+  /// 主战线手数（用于胜率补全与是否完整判断）。
+  int _mainLineTotalTurns() {
+    if (_sgf == null) return 0;
+    final List<SgfNode> mainLine = _sgf!.mainLineNodes();
+    return mainLine.where((SgfNode n) => n.move != null).length;
+  }
+
+  /// 主战线胜率未全覆盖时为 true；已完整不显示「胜率自动补全」。
+  bool get _isWinrateIncomplete {
+    final int total = _mainLineTotalTurns();
+    if (total <= 0) return false;
+    for (int t = 1; t <= total; t++) {
+      if (!_winrates.containsKey(t)) return true;
+    }
+    return false;
+  }
+
+  Future<void> _persistWinrates() async {
+    if (_recordId == null) return;
+    final GameRecord? rec = await _recordRepository.loadById(_recordId!);
+    if (rec == null) return;
+    final String winrateJson = jsonEncode(
+      _winrates.map((int k, double v) => MapEntry<String, dynamic>(k.toString(), v)),
+    );
+    final int now = DateTime.now().millisecondsSinceEpoch;
+    await _recordRepository.upsert(GameRecord(
+      id: rec.id,
+      source: rec.source,
+      title: rec.title,
+      boardSize: rec.boardSize,
+      ruleset: rec.ruleset,
+      komi: rec.komi,
+      sgf: rec.sgf,
+      status: rec.status,
+      sessionJson: rec.sessionJson,
+      winrateJson: winrateJson,
+      createdAtMs: rec.createdAtMs,
+      updatedAtMs: now,
+    ));
+  }
+
+  /// 从第 1 步起逐手补全主战线黑方胜率；已有胜率的步跳过。每步完成后立即刷新曲线并写回记录，中途退出也保留已算步。
+  Future<void> _fillWinrates() async {
+    if (_sgf == null || _analyzing || _isFillingWinrate) return;
+    final List<SgfNode> mainLine = _sgf!.mainLineNodes();
+    final List<String> moveTokens = mainLine
+        .where((SgfNode n) => n.move != null)
+        .map((SgfNode n) => n.move!)
+        .map((GoMove m) => m.toProtocolToken(_sgf!.boardSize))
+        .toList();
+    final int totalTurns = moveTokens.length;
+    if (totalTurns <= 0) return;
+    final List<String> initialStones = <String>[
+      ..._sgf!.initialBlackStones.map(
+        (GoPoint p) =>
+            'B:${GoMove(player: GoStone.black, point: p).toGtp(_sgf!.boardSize)}',
+      ),
+      ..._sgf!.initialWhiteStones.map(
+        (GoPoint p) =>
+            'W:${GoMove(player: GoStone.white, point: p).toGtp(_sgf!.boardSize)}',
+      ),
+    ];
+    final StoneColor startingPlayer = _sgf!.initialBlackStones.isNotEmpty
+        ? StoneColor.white
+        : StoneColor.black;
+    final RulePreset preset = rulePresetFromString(_ruleset);
+    final double komi = double.tryParse(_komiController.text) ?? preset.defaultKomi;
+    final AnalysisProfile profile = _profileForWinrateFill();
+
+    setState(() {
+      _isFillingWinrate = true;
+      _status = _t(
+        zh: '胜率计算中，当前第 0 步',
+        en: 'Computing winrate, step 0',
+        ja: '勝率計算中、0手目',
+        ko: '승률 계산 중, 0수',
+      );
+    });
+    try {
+      for (int turn = 1; turn <= totalTurns; turn++) {
+        if (!mounted) break;
+        if (_winrates.containsKey(turn)) continue;
+        setState(() {
+          _status = _t(
+            zh: '胜率计算中，当前第 $turn 步',
+            en: 'Computing winrate, step $turn',
+            ja: '勝率計算中、$turn 手目',
+            ko: '승률 계산 중, $turn수',
+          );
+        });
+        final Map<int, double> data = await _analysisService.analyzeTurns(
+          adapter: _katagoAdapter,
+          moveTokens: moveTokens,
+          boardSize: _sgf!.boardSize,
+          ruleset: _ruleset,
+          komi: komi,
+          profile: profile,
+          initialStones: initialStones,
+          startingPlayer: startingPlayer,
+          timeoutMs: _winrateFillTimeoutMs,
+          startTurn: turn,
+          maxTurnsToAnalyze: 1,
+        );
+        if (!mounted) break;
+        setState(() {
+          _winrates.addAll(data);
+        });
+        await _persistWinrates();
+      }
+      if (mounted) {
+        setState(() {
+          _isFillingWinrate = false;
+          _status = _isWinrateIncomplete
+              ? _t(
+                  zh: '胜率补全已暂停（可再次点击继续）',
+                  en: 'Winrate fill paused (tap again to continue)',
+                  ja: '勝率補完を一時停止（再タップで続行）',
+                  ko: '승률 보완 일시 중지 (다시 탭하여 계속)',
+                )
+              : _t(
+                  zh: '胜率补全完成',
+                  en: 'Winrate fill complete',
+                  ja: '勝率補完完了',
+                  ko: '승률 보완 완료',
+                );
+        });
+      }
+    } on PlatformException catch (e) {
+      if (mounted) {
+        setState(() {
+          _isFillingWinrate = false;
+          _status = e.code == 'ENGINE_TIMEOUT'
+              ? _t(
+                  zh: '分析超时，可再次点击继续未完成步数',
+                  en: 'Analysis timed out. Tap again to continue.',
+                  ja: '解析タイムアウト。再タップで続行できます。',
+                  ko: '분석 시간 초과. 다시 탭하면 이어서 진행됩니다.',
+                )
+              : '${_t(zh: '胜率补全失败', en: 'Winrate fill failed', ja: '勝率補完失敗', ko: '승률 보완 실패')}: ${e.message ?? e.code}';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isFillingWinrate = false;
+          _status =
+              '${_t(zh: '胜率补全失败', en: 'Winrate fill failed', ja: '勝率補完失敗', ko: '승률 보완 실패')}: $e';
         });
       }
     }
@@ -1547,6 +1860,191 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _sgf == null ? null : (_path.isEmpty ? _sgf!.root : _path.last);
 
   int get _currentTurn => _path.length;
+
+  /// 将当前 SGF 树序列化并写回记录（仅当 _canSaveRecord 时）。
+  Future<void> _persistSgf() async {
+    if (!_canSaveRecord || _sgf == null || _recordId == null) {
+      return;
+    }
+    final GameRecord? record =
+        await _recordRepository.loadById(_recordId!);
+    if (record == null || !mounted) {
+      return;
+    }
+    final int now = DateTime.now().millisecondsSinceEpoch;
+    final GameRecord updated = GameRecord(
+      id: record.id,
+      source: record.source,
+      title: record.title,
+      boardSize: record.boardSize,
+      ruleset: record.ruleset,
+      komi: record.komi,
+      sgf: serializeSgf(_sgf!),
+      status: record.status,
+      sessionJson: record.sessionJson,
+      winrateJson: record.winrateJson,
+      createdAtMs: record.createdAtMs,
+      updatedAtMs: now,
+    );
+    await _recordRepository.upsert(updated);
+  }
+
+  /// 打开当前节点笔记编辑弹窗；保存后写回 SGF 并持久化。
+  Future<void> _openNoteEditor() async {
+    final SgfNode? node = _currentNode;
+    if (node == null || !_canSaveRecord) {
+      return;
+    }
+    final TextEditingController ctrl = TextEditingController(text: node.comment ?? '');
+    if (!mounted) return;
+    final String? result = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(
+            _t(zh: '打谱笔记', en: 'Note', ja: '棋譜メモ', ko: '기보 메모'),
+          ),
+          content: TextField(
+            controller: ctrl,
+            maxLines: 5,
+            decoration: InputDecoration(
+              hintText: _t(
+                zh: '在此输入本手笔记…',
+                en: 'Enter note for this move…',
+                ja: 'この手のメモを入力…',
+                ko: '이 수에 대한 메모 입력…',
+              ),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(ctrl.text),
+              child: Text(MaterialLocalizations.of(context).okButtonLabel),
+            ),
+          ],
+        );
+      },
+    );
+    if (result != null && mounted) {
+      setState(() {
+        node.comment = result.trim().isEmpty ? null : result.trim();
+      });
+      await _persistSgf();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(zh: '笔记已保存', en: 'Note saved', ja: 'メモを保存しました', ko: '메모 저장됨'),
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  /// 试下保存为变化图：将试下着法作为新分支挂在当前节点，可选标注，然后结束试下。
+  Future<void> _saveTryAsVariation() async {
+    final GoGameState? boardState = _stateAtPath();
+    if (_reviewTryState == null ||
+        boardState == null ||
+        _sgf == null ||
+        _currentNode == null ||
+        !_canSaveRecord) {
+      return;
+    }
+    if (_reviewTryState!.moves.length <= boardState.moves.length) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                zh: '请先试下至少一手',
+                en: 'Play at least one try move first',
+                ja: '試し打ちを1手以上行ってください',
+                ko: '시험 수를 한 수 이상 두세요',
+              ),
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    final List<GoMove> tryMoves = _reviewTryState!.moves
+        .sublist(boardState.moves.length);
+    final SgfNode parent = _currentNode!;
+    SgfNode? first;
+    SgfNode? prev;
+    for (final GoMove m in tryMoves) {
+      final int moveNum = (prev?.moveNumber ?? parent.moveNumber) + 1;
+      final SgfNode n = SgfNode(move: m, moveNumber: moveNum);
+      if (first == null) {
+        first = n;
+      } else {
+        prev!.children.add(n);
+      }
+      prev = n;
+    }
+    if (first == null) {
+      return;
+    }
+    parent.children.add(first);
+    if (mounted) {
+      final String? label = await showDialog<String>(
+        context: context,
+        builder: (BuildContext context) {
+          final TextEditingController c = TextEditingController();
+          return AlertDialog(
+            title: Text(
+              _t(zh: '变化图标注', en: 'Variation label', ja: '変化図ラベル', ko: '변화도 라벨'),
+            ),
+            content: TextField(
+              controller: c,
+              decoration: InputDecoration(
+                hintText: _t(
+                  zh: '可选：输入变化图说明',
+                  en: 'Optional: variation description',
+                  ja: '任意：変化の説明',
+                  ko: '선택: 변화도 설명',
+                ),
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(c.text.trim().isEmpty ? null : c.text.trim()),
+                child: Text(MaterialLocalizations.of(context).okButtonLabel),
+              ),
+            ],
+          );
+        },
+      );
+      if (label != null && label.isNotEmpty) {
+        first.comment = label;
+      }
+    }
+    await _persistSgf();
+    if (mounted) {
+      setState(() {
+        _reviewTryMode = false;
+        _reviewTryState = null;
+        _reviewHintPoints = <GoPoint>[];
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(zh: '已保存为变化图', en: 'Saved as variation', ja: '変化図として保存しました', ko: '변화도로 저장됨'),
+          ),
+        ),
+      );
+    }
+  }
 
   void _next() {
     final SgfNode? node = _currentNode;
@@ -1897,6 +2395,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                 _reviewHintPoints = <GoPoint>[];
               });
             },
+            onSaveAsVariation: _canSaveRecord ? _saveTryAsVariation : null,
             onTryPlay: (GoPoint p) {
               final GoGameState cur = _reviewTryState ?? boardState;
               try {
@@ -2093,6 +2592,34 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
+                if (_currentNode != null) ...<Widget>[
+                  Row(
+                    children: <Widget>[
+                      Text(
+                        _t(zh: '笔记', en: 'Note', ja: 'メモ', ko: '메모'),
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _currentNode!.comment ?? '—',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ),
+                      if (_canSaveRecord)
+                        TextButton.icon(
+                          onPressed: _openNoteEditor,
+                          icon: const Icon(Icons.edit_note, size: 20),
+                          label: Text(
+                            _t(zh: '编辑', en: 'Edit', ja: '編集', ko: '편집'),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 if (_winrates.isNotEmpty) ...<Widget>[
                   Text(
                     _t(zh: '妙手提示', en: 'Brilliant Moves', ja: '妙手', ko: '묘수'),
@@ -2127,23 +2654,51 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                     ...reviewBadHints.map(Text.new),
                   const SizedBox(height: 12),
                 ],
-                FilledButton.icon(
-                  onPressed: _analyzing ? null : _analyzeCurrentWinrate,
-                  icon: _analyzing
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.analytics_outlined),
-                  label: Text(
-                    _t(
-                      zh: '分析当前胜率',
-                      en: 'Analyze current winrate',
-                      ja: '現在勝率を解析',
-                      ko: '현재 승률 분석',
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    if (_isWinrateIncomplete && !_isFillingWinrate) ...[
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        ),
+                        onPressed: _analyzing ? null : _fillWinrates,
+                        icon: const Icon(Icons.auto_fix_high, size: 18),
+                        label: Text(
+                          _t(
+                            zh: '胜率自动补全',
+                            en: 'Fill winrate',
+                            ja: '勝率を自動補完',
+                            ko: '승률 자동 보완',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                      onPressed: (_analyzing || _isFillingWinrate) ? null : _analyzeCurrentWinrate,
+                      icon: _analyzing
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.analytics_outlined, size: 18),
+                      label: Text(
+                        _t(
+                          zh: '分析当前胜率',
+                          en: 'Analyze current winrate',
+                          ja: '現在勝率を解析',
+                          ko: '현재 승률 분석',
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
               ],
             ),
@@ -2164,6 +2719,13 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           title: Text(
             _t(zh: '打谱复盘', en: 'SGF Review', ja: '棋譜復盤', ko: '기보 복기'),
           ),
+          actions: <Widget>[
+            TextButton.icon(
+              onPressed: _stateAtPath() == null ? null : _openContinuePlay,
+              icon: const Icon(Icons.play_arrow, size: 20),
+              label: Text(_t(zh: '续下', en: 'Continue', ja: '続き対局', ko: '계속 대국')),
+            ),
+          ],
         ),
         body: content,
       );

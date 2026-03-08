@@ -7,10 +7,13 @@ import 'package:image_picker/image_picker.dart';
 import 'package:mastergo/app/app_i18n.dart';
 import 'package:mastergo/domain/entities/analysis_profile.dart';
 import 'package:mastergo/domain/entities/game_setup.dart';
+import 'package:mastergo/domain/entities/game_rules.dart';
 import 'package:mastergo/domain/entities/rule_presets.dart';
 import 'package:mastergo/domain/go/go_game.dart';
 import 'package:mastergo/domain/go/go_types.dart';
+import 'package:mastergo/features/ai_play/ai_play_page.dart';
 import 'package:mastergo/features/common/go_board_widget.dart';
+import 'package:mastergo/infra/config/ai_profile_repository.dart';
 import 'package:mastergo/features/common/ownership_result_sheet.dart';
 import 'package:mastergo/features/photo_judge/board_corner_editor.dart';
 import 'package:mastergo/features/photo_judge/go_board_recognizer_opencv.dart';
@@ -23,9 +26,19 @@ class PhotoJudgePage extends StatefulWidget {
   State<PhotoJudgePage> createState() => _PhotoJudgePageState();
 }
 
+const AnalysisProfile _photoContinueFallbackProfile = AnalysisProfile(
+  id: 'photo-continue',
+  name: 'default',
+  description: 'default',
+  maxVisits: 2,
+  thinkingTimeMs: 10000,
+  includeOwnership: false,
+);
+
 class _PhotoJudgePageState extends State<PhotoJudgePage> {
   final ImagePicker _picker = ImagePicker();
   final KatagoAdapter _adapter = PlatformKatagoAdapter();
+  final AIProfileRepository _profileRepository = AIProfileRepository();
   /// 拍照分析用快速档时间：10s 思考，超时 2×=20s（与原则一致）。
   static const AnalysisProfile _analysisProfile = AnalysisProfile(
     id: 'photo-judge',
@@ -440,6 +453,109 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
     return GoPoint(x, y);
   }
 
+  /// 拍照续下：默认中国规则，可选规则与难度；当前玩家先下，下一步 AI 下。
+  Future<void> _openContinuePlay() async {
+    final RecognizedBoard? r = _recognized;
+    if (r == null) return;
+    List<AnalysisProfile> profiles = <AnalysisProfile>[];
+    try {
+      profiles = await _profileRepository.loadProfiles();
+    } catch (_) {}
+    if (profiles.isEmpty) {
+      profiles = <AnalysisProfile>[_photoContinueFallbackProfile];
+    }
+    int profileIndex = 0;
+    String rulesetId = 'chinese';
+    if (!mounted) return;
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, void Function(void Function()) setDialogState) {
+            return AlertDialog(
+              title: Text(
+                _t(zh: '续下', en: 'Continue Play', ja: '続き対局', ko: '계속 대국'),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      _t(zh: '规则', en: 'Rules', ja: 'ルール', ko: '규칙'),
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 4),
+                    DropdownButton<String>(
+                      value: kRulePresets.any((RulePreset p) => p.id == rulesetId)
+                          ? rulesetId
+                          : kRulePresets.first.id,
+                      isExpanded: true,
+                      items: kRulePresets
+                          .map(
+                            (RulePreset p) => DropdownMenuItem<String>(
+                              value: p.id,
+                              child: Text(_s.ruleLabel(p.id)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (String? v) {
+                        if (v != null) setDialogState(() => rulesetId = v);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      _t(zh: 'AI 难度', en: 'AI strength', ja: 'AI強さ', ko: 'AI 난이도'),
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 4),
+                    DropdownButton<int>(
+                      value: profileIndex.clamp(0, profiles.length - 1),
+                      isExpanded: true,
+                      items: List<DropdownMenuItem<int>>.generate(
+                        profiles.length,
+                        (int i) => DropdownMenuItem<int>(
+                          value: i,
+                          child: Text(
+                            '${_s.aiProfileName(profiles[i].id, profiles[i].name)} (${profiles[i].maxVisits})',
+                          ),
+                        ),
+                      ),
+                      onChanged: (int? v) {
+                        if (v != null) setDialogState(() => profileIndex = v);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: Text(_t(zh: '取消', en: 'Cancel', ja: 'キャンセル', ko: '취소')),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: Text(_t(zh: '开始', en: 'Start', ja: '開始', ko: '시작')),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (confirmed != true || !mounted) return;
+    final AnalysisProfile profile = profiles[profileIndex.clamp(0, profiles.length - 1)];
+    final RulePreset preset = rulePresetFromString(rulesetId);
+    final GameRules rules = preset.toGameRules(komi: preset.defaultKomi);
+    await AIPlayPage.pushContinuePlay(
+      context,
+      initialGameState: _stateFromRecognized(r),
+      profile: profile,
+      rules: rules,
+      prefixMoveCount: 0,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final RecognizedBoard? r = _recognized;
@@ -628,6 +744,12 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
                   onPressed: _loading ? null : _analyzePosition,
                   icon: const Icon(Icons.analytics_outlined),
                   label: Text(_t(zh: '分析局面', en: 'Analyze', ja: '局面分析', ko: '국면 분석')),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: _loading ? null : _openContinuePlay,
+                  icon: const Icon(Icons.play_arrow, size: 20),
+                  label: Text(_t(zh: '续下', en: 'Continue', ja: '続き対局', ko: '계속 대국')),
                 ),
               ],
             ),
