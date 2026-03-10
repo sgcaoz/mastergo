@@ -6,15 +6,7 @@ String serializeSgf(SgfGame game) {
   final StringBuffer sb = StringBuffer();
   sb.write('(;');
   _writeRootProps(sb, game);
-  for (int i = 0; i < game.root.children.length; i++) {
-    if (i == 0) {
-      _writeNodeSequence(sb, game.root.children[0], game.boardSize);
-    } else {
-      sb.write('(');
-      _writeNodeSequence(sb, game.root.children[i], game.boardSize);
-      sb.write(')');
-    }
-  }
+  _writeChildren(sb, game.root.children, game.boardSize);
   sb.write(')');
   return sb.toString();
 }
@@ -39,18 +31,29 @@ void _writeRootProps(StringBuffer sb, SgfGame game) {
   if (game.gameName != null && game.gameName!.isNotEmpty) {
     sb.write('GN[${_escapeText(game.gameName!)}]');
   }
+  if (game.result != null && game.result!.isNotEmpty) {
+    sb.write('RE[${_escapeText(game.result!)}]');
+  }
 }
 
 void _writeNodeSequence(StringBuffer sb, SgfNode node, int boardSize) {
   sb.write(';');
   _writeNodeProps(sb, node, boardSize);
-  if (node.children.isNotEmpty) {
-    _writeNodeSequence(sb, node.children[0], boardSize);
-    for (int i = 1; i < node.children.length; i++) {
-      sb.write('(');
-      _writeNodeSequence(sb, node.children[i], boardSize);
-      sb.write(')');
-    }
+  _writeChildren(sb, node.children, boardSize);
+}
+
+void _writeChildren(StringBuffer sb, List<SgfNode> children, int boardSize) {
+  if (children.isEmpty) {
+    return;
+  }
+  if (children.length == 1) {
+    _writeNodeSequence(sb, children.first, boardSize);
+    return;
+  }
+  for (final SgfNode child in children) {
+    sb.write('(');
+    _writeNodeSequence(sb, child, boardSize);
+    sb.write(')');
   }
 }
 

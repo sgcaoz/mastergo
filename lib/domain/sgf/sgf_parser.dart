@@ -11,6 +11,7 @@ class SgfGame {
     this.blackName,
     this.whiteName,
     this.gameName,
+    this.result,
   });
 
   final int boardSize;
@@ -22,6 +23,7 @@ class SgfGame {
   final String? blackName;
   final String? whiteName;
   final String? gameName;
+  final String? result;
 
   List<SgfNode> mainLineNodes() {
     final List<SgfNode> nodes = <SgfNode>[];
@@ -62,6 +64,7 @@ class SgfParser {
       blackName: meta.blackName,
       whiteName: meta.whiteName,
       gameName: meta.gameName,
+      result: meta.result,
     );
   }
 
@@ -190,6 +193,7 @@ class _SgfMeta {
     this.blackName,
     this.whiteName,
     this.gameName,
+    this.result,
   });
 
   final bool rootSeen;
@@ -201,6 +205,7 @@ class _SgfMeta {
   final String? blackName;
   final String? whiteName;
   final String? gameName;
+  final String? result;
 
   _SgfMeta withRootProps(Map<String, List<String>> props) {
     String? first(String key) =>
@@ -234,6 +239,7 @@ class _SgfMeta {
       blackName: first('PB'),
       whiteName: first('PW'),
       gameName: first('GN'),
+      result: first('RE'),
     );
   }
 }

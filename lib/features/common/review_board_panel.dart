@@ -21,11 +21,14 @@ class ReviewBoardPanel extends StatelessWidget {
     this.lastMovePoint,
     this.hintSummary,
     this.onTryPlay,
+    this.tentativePoint,
+    this.tentativeStone,
     this.title,
     this.turnNavigation,
     this.currentTurn,
     this.maxTurn,
     this.winrates,
+    this.winrateSeries,
     this.onTurnSelected,
     this.bottomChild,
     this.hintLoading = false,
@@ -52,6 +55,10 @@ class ReviewBoardPanel extends StatelessWidget {
   final VoidCallback? onSaveAsVariation;
   /// 试下时落子回调；非试下时为 null，棋盘不可点
   final ValueChanged<GoPoint>? onTryPlay;
+  /// 试下时待确认的落子点（首次点击显示落子虚影，再次点击同一点确认）
+  final GoPoint? tentativePoint;
+  /// 试下时待确认落子点的棋子颜色（与 tentativePoint 同时使用）
+  final GoStone? tentativeStone;
   /// 请求提示（父层异步请求后更新 hintPoints/hintSummary 并重建）
   final VoidCallback onRequestHint;
   /// 请求局势分析（父层异步请求后弹层展示）
@@ -68,8 +75,10 @@ class ReviewBoardPanel extends StatelessWidget {
   final int? currentTurn;
   /// 仅用于复盘场景：最大手数（用于胜率图 X 轴范围）
   final int? maxTurn;
-  /// 仅用于复盘场景：胜率数据
+  /// 仅用于复盘场景：胜率数据（单条曲线，与 [winrateSeries] 二选一）
   final Map<int, double>? winrates;
+  /// 多条胜率曲线（主战线 + 变化图分支，不同颜色）；非空时优先于 [winrates]
+  final List<WinrateSeries>? winrateSeries;
   /// 拖动胜率图竖线时回调，用于快速跳转手数
   final ValueChanged<int>? onTurnSelected;
   /// 可选底部内容（妙手恶手、SGF 等）
@@ -97,6 +106,8 @@ class ReviewBoardPanel extends StatelessWidget {
       board: state.board,
       onTapPoint: tryMode ? onTryPlay : null,
       lastMovePoint: lastMovePoint,
+      tentativePoint: tryMode ? tentativePoint : null,
+      tentativeStone: tryMode ? tentativeStone : null,
       hintPoints: hintPoints,
     );
 
@@ -169,13 +180,18 @@ class ReviewBoardPanel extends StatelessWidget {
             style: const TextStyle(fontSize: 12),
           ),
         ],
-        if (winrates != null && maxTurn != null) ...<Widget>[
+        if (maxTurn != null &&
+            ((winrateSeries != null && winrateSeries!.isNotEmpty) ||
+                (winrates != null && winrates!.isNotEmpty))) ...<Widget>[
           const SizedBox(height: 12),
           SizedBox(
             height: 100,
             child: WinrateChart(
-              winrates: winrates!,
               maxTurn: maxTurn!,
+              winrates: winrateSeries != null && winrateSeries!.isNotEmpty
+                  ? null
+                  : winrates,
+              winrateSeries: winrateSeries,
               highlightTurn: currentTurn,
               onTurnSelected: onTurnSelected,
             ),

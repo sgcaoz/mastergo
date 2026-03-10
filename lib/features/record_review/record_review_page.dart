@@ -24,7 +24,9 @@ import 'package:mastergo/features/ai_play/ai_play_page.dart';
 import 'package:mastergo/domain/sgf/sgf_parser.dart';
 import 'package:mastergo/domain/sgf/sgf_writer.dart';
 import 'package:mastergo/features/common/ownership_result_sheet.dart';
+import 'package:mastergo/features/common/pending_confirm_timer.dart';
 import 'package:mastergo/features/common/review_board_panel.dart';
+import 'package:mastergo/features/common/winrate_chart.dart';
 import 'package:mastergo/infra/config/ai_profile_repository.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
 import 'package:mastergo/infra/sound/stone_sound.dart';
@@ -214,6 +216,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   bool _downloading = false;
   bool _reviewTryMode = false;
   GoGameState? _reviewTryState;
+  /// 试下时双击确认：首次点击仅记录待确认点，再次点击同一点才落子；3 秒无操作自动确认。
+  GoPoint? _reviewTryPendingPoint;
+  final PendingConfirmTimer _reviewTryPendingConfirmTimer = PendingConfirmTimer();
   List<GoPoint> _reviewHintPoints = <GoPoint>[];
   bool _reviewHintLoading = false;
   bool _reviewOwnershipLoading = false;
@@ -221,7 +226,14 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   final Set<String> _selectedIds = <String>{};
   final Map<String, Future<List<GameRecord>>> _sourceFutures =
       <String, Future<List<GameRecord>>>{};
-  final Map<int, double> _winrates = <int, double>{};
+  /// 主战线胜率（兼容旧逻辑与续下传入）；实际多分支数据在 [_winratesByBranch]。
+  Map<int, double> get _winrates => _winratesByBranch[''] ?? <int, double>{};
+  /// 各变化图分支胜率：分支 key（见 [_pathToBranchKey]）-> 手数 -> 黑方胜率。
+  final Map<String, Map<int, double>> _winratesByBranch =
+      <String, Map<int, double>>{};
+  /// 胜率升降记录：分支 key -> 手数串 -> 文案（如「第5手 -12%」），存 sessionJson，不随用户编辑笔记改变。
+  final Map<String, Map<String, String>> _winrateNotes =
+      <String, Map<String, String>>{};
   bool _isFillingWinrate = false;
   String? _status;
   String? _recordId;
@@ -998,6 +1010,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           blackName: _sgf!.blackName,
           whiteName: _sgf!.whiteName,
           gameName: _sgf!.gameName,
+          result: _sgf!.result,
         );
       });
     } catch (_) {}
@@ -1058,23 +1071,55 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       return;
     }
     final GameRecord? rec = await _recordRepository.loadById(_recordId!);
-    if (rec == null || rec.winrateJson.isEmpty) {
+    if (rec == null) {
+      return;
+    }
+    _loadWinrateNotesFromSession(rec.sessionJson);
+    if (rec.winrateJson.isEmpty) {
       return;
     }
     try {
       final Map<String, dynamic> raw =
           jsonDecode(rec.winrateJson) as Map<String, dynamic>;
-      final Map<int, double> parsed = raw.map(
-        (String k, dynamic v) =>
-            MapEntry<int, double>(int.tryParse(k) ?? 0, (v as num).toDouble()),
-      )..remove(0);
-      if (!mounted || parsed.isEmpty) {
+      final Map<String, Map<int, double>> loaded = <String, Map<int, double>>{};
+      final dynamic firstValue = raw.isNotEmpty ? raw.values.first : null;
+      if (firstValue is num) {
+        // 旧格式：扁平 { "1": 0.55, "2": 0.52 } -> 主战线
+        final Map<int, double> parsed = raw.map(
+          (String k, dynamic v) => MapEntry<int, double>(
+            int.tryParse(k) ?? 0,
+            (v as num).toDouble(),
+          ),
+        )..remove(0);
+        if (parsed.isNotEmpty) {
+          loaded[''] = parsed;
+        }
+      } else if (firstValue is Map) {
+        // 新格式：按分支 { "": { "1": 0.55 }, "0-1": { "4": 0.48 } }
+        for (final MapEntry<String, dynamic> entry in raw.entries) {
+          final Map<String, dynamic> branchRaw =
+              (entry.value as Map<dynamic, dynamic>?)
+                  ?.map((dynamic k, dynamic v) =>
+                      MapEntry<String, dynamic>(k.toString(), v)) ??
+              <String, dynamic>{};
+          final Map<int, double> branch = branchRaw.map(
+            (String k, dynamic v) => MapEntry<int, double>(
+              int.tryParse(k) ?? 0,
+              (v as num).toDouble(),
+            ),
+          )..remove(0);
+          if (branch.isNotEmpty) {
+            loaded[entry.key] = branch;
+          }
+        }
+      }
+      if (!mounted || loaded.isEmpty) {
         return;
       }
       setState(() {
-        _winrates
+        _winratesByBranch
           ..clear()
-          ..addAll(parsed);
+          ..addAll(loaded);
         if (_isBattleRecord) {
           _status = _t(
             zh: '已加载对局内胜率数据',
@@ -1089,9 +1134,82 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     }
   }
 
+  void _loadWinrateNotesFromSession(String sessionJson) {
+    if (sessionJson.isEmpty) return;
+    try {
+      final Map<String, dynamic> data =
+          jsonDecode(sessionJson) as Map<String, dynamic>;
+      final dynamic raw = data['winrateNotes'];
+      if (raw is! Map) return;
+      final Map<String, Map<String, String>> loaded =
+          <String, Map<String, String>>{};
+      for (final MapEntry<dynamic, dynamic> entry in (raw as Map<dynamic, dynamic>).entries) {
+        final String branchKey = entry.key.toString();
+        final dynamic val = entry.value;
+        if (val is! Map) continue;
+        loaded[branchKey] = (val as Map<dynamic, dynamic>).map(
+          (dynamic k, dynamic v) => MapEntry<String, String>(k.toString(), v.toString()),
+        );
+      }
+      _winrateNotes
+        ..clear()
+        ..addAll(loaded);
+    } catch (_) {}
+  }
+
+  /// 胜率跌幅 >10% 或 涨幅 >2% 时记入笔记（不随用户编辑改变），并持久化到 sessionJson。
+  static const double _winrateDropThreshold = 0.10;
+  static const double _winrateRiseThreshold = 0.02;
+
+  void _recordWinrateDelta(String branchKey, int turn, double delta) {
+    if (delta > _winrateRiseThreshold || delta < -_winrateDropThreshold) {
+      final String pct = (delta >= 0 ? '+' : '') + (delta * 100).toStringAsFixed(1);
+      _winrateNotes[branchKey] ??= <String, String>{};
+      _winrateNotes[branchKey]![turn.toString()] = _t(
+        zh: '第${turn}手 $pct%',
+        en: 'Move $turn $pct%',
+        ja: '${turn}手目 $pct%',
+        ko: '${turn}수 $pct%',
+      );
+      unawaited(_persistSessionWinrateNotes());
+    }
+  }
+
+  Future<void> _persistSessionWinrateNotes() async {
+    if (_recordId == null) return;
+    final GameRecord? rec = await _recordRepository.loadById(_recordId!);
+    if (rec == null) return;
+    try {
+      final Map<String, dynamic> data = rec.sessionJson.isEmpty
+          ? <String, dynamic>{}
+          : Map<String, dynamic>.from(
+              jsonDecode(rec.sessionJson) as Map<String, dynamic>);
+      data['winrateNotes'] = _winrateNotes.map(
+        (String k, Map<String, String> v) =>
+            MapEntry<String, dynamic>(k, v),
+      );
+      final int now = DateTime.now().millisecondsSinceEpoch;
+      await _recordRepository.upsert(GameRecord(
+        id: rec.id,
+        source: rec.source,
+        title: rec.title,
+        boardSize: rec.boardSize,
+        ruleset: rec.ruleset,
+        komi: rec.komi,
+        sgf: rec.sgf,
+        status: rec.status,
+        sessionJson: jsonEncode(data),
+        winrateJson: rec.winrateJson,
+        createdAtMs: rec.createdAtMs,
+        updatedAtMs: now,
+      ));
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
     unawaited(_katagoAdapter.shutdown());
+    _reviewTryPendingConfirmTimer.cancel();
     _komiController.dispose();
     _urlController.dispose();
     super.dispose();
@@ -1155,7 +1273,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _komiController.text = parsed.komi.toString();
       _path = <SgfNode>[];
       _selectedVariation = 0;
-      _winrates.clear();
+      _winratesByBranch.clear();
+      _winrateNotes.clear();
       _status = existing != null
           ? _t(
               zh: '重复棋谱：已存在，未重复导入',
@@ -1193,14 +1312,35 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       try {
         final Map<String, dynamic> raw =
             jsonDecode(existing.winrateJson) as Map<String, dynamic>;
-        final Map<int, double> parsedWinrates = raw.map(
-          (String k, dynamic v) => MapEntry<int, double>(
-            int.tryParse(k) ?? 0,
-            (v as num).toDouble(),
-          ),
-        )..remove(0);
-        if (mounted) {
-          setState(() => _winrates.addAll(parsedWinrates));
+        final dynamic firstValue = raw.isNotEmpty ? raw.values.first : null;
+        if (firstValue is num) {
+          final Map<int, double> parsed = raw.map(
+            (String k, dynamic v) => MapEntry<int, double>(
+              int.tryParse(k) ?? 0,
+              (v as num).toDouble(),
+            ),
+          )..remove(0);
+          if (mounted && parsed.isNotEmpty) {
+            setState(() => _winratesByBranch[''] = Map<int, double>.from(parsed));
+          }
+        } else if (firstValue is Map && mounted) {
+          for (final MapEntry<String, dynamic> entry in raw.entries) {
+            final Map<String, dynamic> br =
+                (entry.value as Map<dynamic, dynamic>?)?.map(
+                  (dynamic k, dynamic v) =>
+                      MapEntry<String, dynamic>(k.toString(), v),
+                ) ?? <String, dynamic>{};
+            final Map<int, double> branch = br.map(
+              (String k, dynamic v) => MapEntry<int, double>(
+                int.tryParse(k) ?? 0,
+                (v as num).toDouble(),
+              ),
+            )..remove(0);
+            if (branch.isNotEmpty) {
+              setState(() => _winratesByBranch[entry.key] =
+                  Map<int, double>.from(branch));
+            }
+          }
         }
       } catch (_) {}
     }
@@ -1284,7 +1424,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         _komiController.text = parsed.komi.toString();
         _path = <SgfNode>[];
         _selectedVariation = 0;
-        _winrates.clear();
+        _winratesByBranch.clear();
+        _winrateNotes.clear();
         _status = existing == null
             ? _t(
                 zh: '下载并导入成功',
@@ -1437,7 +1578,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       originalRuleset: _sgf!.rules,
       originalInitialBlack: _sgf!.initialBlackStones,
       originalInitialWhite: _sgf!.initialWhiteStones,
-      prefixWinrates: _winrates.isEmpty ? null : Map<int, double>.from(_winrates),
+      prefixWinrates: _winratesForCurrentBranch.isEmpty
+          ? null
+          : Map<int, double>.from(_winratesForCurrentBranch),
     );
   }
 
@@ -1529,8 +1672,13 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       if (!mounted) {
         return;
       }
+      final String branchKey = _currentBranchKey;
+      final double prevWr = _currentTurn <= 1
+          ? 0.5
+          : (_winratesByBranch[branchKey]?[_currentTurn - 1] ?? 0.5);
       setState(() {
-        _winrates.addAll(data);
+        _winratesByBranch[branchKey] ??= <int, double>{};
+        _winratesByBranch[branchKey]!.addAll(data);
         _status = _t(
           zh: '分析完成',
           en: 'Analysis complete',
@@ -1538,6 +1686,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           ko: '분석 완료',
         );
       });
+      final double newWr = data[_currentTurn] ?? prevWr;
+      _recordWinrateDelta(branchKey, _currentTurn, newWr - prevWr);
+      await _persistWinrates();
     } on PlatformException catch (e) {
       setState(() {
         _status = e.code == 'ENGINE_TIMEOUT'
@@ -1563,19 +1714,15 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     }
   }
 
-  /// 主战线手数（用于胜率补全与是否完整判断）。
-  int _mainLineTotalTurns() {
-    if (_sgf == null) return 0;
-    final List<SgfNode> mainLine = _sgf!.mainLineNodes();
-    return mainLine.where((SgfNode n) => n.move != null).length;
-  }
-
-  /// 主战线胜率未全覆盖时为 true；已完整不显示「胜率自动补全」。
+  /// 当前分支胜率未全覆盖时为 true；已完整不显示「胜率自动补全」。
   bool get _isWinrateIncomplete {
-    final int total = _mainLineTotalTurns();
+    final int total = _path
+        .where((SgfNode n) => n.move != null)
+        .length;
     if (total <= 0) return false;
+    final Map<int, double>? branch = _winratesByBranch[_currentBranchKey];
     for (int t = 1; t <= total; t++) {
-      if (!_winrates.containsKey(t)) return true;
+      if (branch == null || !branch.containsKey(t)) return true;
     }
     return false;
   }
@@ -1584,9 +1731,43 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     if (_recordId == null) return;
     final GameRecord? rec = await _recordRepository.loadById(_recordId!);
     if (rec == null) return;
-    final String winrateJson = jsonEncode(
-      _winrates.map((int k, double v) => MapEntry<String, dynamic>(k.toString(), v)),
-    );
+    final Map<String, dynamic> byBranch = <String, dynamic>{};
+    for (final MapEntry<String, Map<int, double>> entry
+        in _winratesByBranch.entries) {
+      if (entry.value.isEmpty) continue;
+      byBranch[entry.key] = entry.value
+          .map((int k, double v) => MapEntry<String, dynamic>(k.toString(), v));
+    }
+    // 主战线键 "" 若本次未写入，则保留原记录中的主战线胜率，避免丢失
+    if (!byBranch.containsKey('') && rec.winrateJson.isNotEmpty) {
+      try {
+        final Map<String, dynamic> raw =
+            jsonDecode(rec.winrateJson) as Map<String, dynamic>;
+        final dynamic firstValue = raw.isNotEmpty ? raw.values.first : null;
+        if (firstValue is num) {
+          final Map<int, double> parsed = raw.map(
+            (String k, dynamic v) => MapEntry<int, double>(
+              int.tryParse(k) ?? 0,
+              (v as num).toDouble(),
+            ),
+          )..remove(0);
+          if (parsed.isNotEmpty) {
+            byBranch[''] = parsed
+                .map((int k, double v) => MapEntry<String, dynamic>(k.toString(), v));
+          }
+        } else if (firstValue is Map && raw[''] != null) {
+          final Map<String, dynamic>? mainRaw =
+              (raw[''] as Map<dynamic, dynamic>?)?.map(
+                (dynamic k, dynamic v) =>
+                    MapEntry<String, dynamic>(k.toString(), v),
+              );
+          if (mainRaw != null && mainRaw.isNotEmpty) {
+            byBranch[''] = mainRaw;
+          }
+        }
+      } catch (_) {}
+    }
+    final String winrateJson = jsonEncode(byBranch);
     final int now = DateTime.now().millisecondsSinceEpoch;
     await _recordRepository.upsert(GameRecord(
       id: rec.id,
@@ -1604,17 +1785,50 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     ));
   }
 
-  /// 从第 1 步起逐手补全主战线黑方胜率；已有胜率的步跳过。每步完成后立即刷新曲线并写回记录，中途退出也保留已算步。
+  /// 枚举主战线与所有变化图分支：(branchKey, 该分支的 moveTokens)。
+  List<({String branchKey, List<String> moveTokens})> _allBranchMoveTokens() {
+    if (_sgf == null) return <({String branchKey, List<String> moveTokens})>[];
+    final List<SgfNode> mainLine = _sgf!.mainLineNodes();
+    final List<({String branchKey, List<String> moveTokens})> out =
+        <({String branchKey, List<String> moveTokens})>[];
+    List<String> tokens(List<SgfNode> path) {
+      return path
+          .where((SgfNode n) => n.move != null)
+          .map((SgfNode n) => n.move!)
+          .map((GoMove m) => m.toProtocolToken(_sgf!.boardSize))
+          .toList();
+    }
+    out.add((branchKey: '', moveTokens: tokens(mainLine)));
+    for (int idx = 0; idx < mainLine.length; idx++) {
+      final SgfNode node = mainLine[idx];
+      if (node.children.length <= 1) continue;
+      for (int i = 1; i < node.children.length; i++) {
+        final List<SgfNode> variationPath = mainLine.sublist(0, idx + 1) +
+            _pathToLeaf(node.children[i]);
+        final String key = _pathToBranchKey(variationPath);
+        out.add((branchKey: key, moveTokens: tokens(variationPath)));
+      }
+    }
+    return out;
+  }
+
+  /// 从某节点起沿 children.first 到叶，返回从该节点起的路径（含该节点）。
+  List<SgfNode> _pathToLeaf(SgfNode node) {
+    final List<SgfNode> path = <SgfNode>[node];
+    SgfNode cur = node;
+    while (cur.children.isNotEmpty) {
+      cur = cur.children.first;
+      path.add(cur);
+    }
+    return path;
+  }
+
+  /// 从第 1 步起逐手补全主战线及所有变化图分支的黑方胜率；已有胜率的步跳过。每步完成后立即刷新曲线并写回记录。
   Future<void> _fillWinrates() async {
     if (_sgf == null || _analyzing || _isFillingWinrate) return;
-    final List<SgfNode> mainLine = _sgf!.mainLineNodes();
-    final List<String> moveTokens = mainLine
-        .where((SgfNode n) => n.move != null)
-        .map((SgfNode n) => n.move!)
-        .map((GoMove m) => m.toProtocolToken(_sgf!.boardSize))
-        .toList();
-    final int totalTurns = moveTokens.length;
-    if (totalTurns <= 0) return;
+    final List<({String branchKey, List<String> moveTokens})> branches =
+        _allBranchMoveTokens();
+    if (branches.isEmpty) return;
     final List<String> initialStones = <String>[
       ..._sgf!.initialBlackStones.map(
         (GoPoint p) =>
@@ -1642,35 +1856,47 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       );
     });
     try {
-      for (int turn = 1; turn <= totalTurns; turn++) {
-        if (!mounted) break;
-        if (_winrates.containsKey(turn)) continue;
-        setState(() {
-          _status = _t(
-            zh: '胜率计算中，当前第 $turn 步',
-            en: 'Computing winrate, step $turn',
-            ja: '勝率計算中、$turn 手目',
-            ko: '승률 계산 중, $turn수',
+      int stepCount = 0;
+      for (final (:branchKey, :moveTokens) in branches) {
+        final int totalTurns = moveTokens.length;
+        if (totalTurns <= 0) continue;
+        _winratesByBranch[branchKey] ??= <int, double>{};
+        for (int turn = 1; turn <= totalTurns; turn++) {
+          if (!mounted) break;
+          if (_winratesByBranch[branchKey]!.containsKey(turn)) continue;
+          stepCount++;
+          setState(() {
+            _status = _t(
+              zh: '胜率计算中，当前第 $stepCount 步',
+              en: 'Computing winrate, step $stepCount',
+              ja: '勝率計算中、$stepCount 手目',
+              ko: '승률 계산 중, $stepCount수',
+            );
+          });
+          final Map<int, double> data = await _analysisService.analyzeTurns(
+            adapter: _katagoAdapter,
+            moveTokens: moveTokens,
+            boardSize: _sgf!.boardSize,
+            ruleset: _ruleset,
+            komi: komi,
+            profile: profile,
+            initialStones: initialStones,
+            startingPlayer: startingPlayer,
+            timeoutMs: _winrateFillTimeoutMs,
+            startTurn: turn,
+            maxTurnsToAnalyze: 1,
           );
-        });
-        final Map<int, double> data = await _analysisService.analyzeTurns(
-          adapter: _katagoAdapter,
-          moveTokens: moveTokens,
-          boardSize: _sgf!.boardSize,
-          ruleset: _ruleset,
-          komi: komi,
-          profile: profile,
-          initialStones: initialStones,
-          startingPlayer: startingPlayer,
-          timeoutMs: _winrateFillTimeoutMs,
-          startTurn: turn,
-          maxTurnsToAnalyze: 1,
-        );
-        if (!mounted) break;
-        setState(() {
-          _winrates.addAll(data);
-        });
-        await _persistWinrates();
+          if (!mounted) break;
+          setState(() {
+            _winratesByBranch[branchKey]!.addAll(data);
+          });
+          final double prevWr = turn <= 1
+              ? 0.5
+              : (_winratesByBranch[branchKey]![turn - 1] ?? 0.5);
+          final double newWr = data[turn] ?? prevWr;
+          _recordWinrateDelta(branchKey, turn, newWr - prevWr);
+          await _persistWinrates();
+        }
       }
       if (mounted) {
         setState(() {
@@ -1861,6 +2087,120 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
 
   int get _currentTurn => _path.length;
 
+  /// 主战线总手数（固定，不随当前是否在变化图而变）。
+  int get _mainLineLength =>
+      _sgf == null ? 0 : _sgf!.mainLineNodes().length;
+
+  /// 胜率图高亮手数：主战线为当前手数，变化图为分支点手数（便于与主战线尺度一致）。
+  int get _chartHighlightTurn {
+    if (_currentBranchKey.isEmpty) return _currentTurn;
+    final List<String> parts = _currentBranchKey.split('-');
+    return parts.isEmpty ? 0 : parts.length;
+  }
+
+  /// 变化图分支点手数（主战线上的第几手）；主战线时为 0。
+  int get _variationBranchTurn {
+    if (_currentBranchKey.isEmpty) return 0;
+    final List<String> parts = _currentBranchKey.split('-');
+    return parts.isEmpty ? 0 : parts.length;
+  }
+
+  /// 变化图内第几手（从分支点算）；主战线时为 0。
+  int get _variationLocalTurn {
+    if (_currentBranchKey.isEmpty) return 0;
+    return _currentTurn - _variationBranchTurn;
+  }
+
+  /// 当前路径对应的分支 key（主战线 = ""，变化图 = "0-0-1" 等，到首次偏离为止），用于按分支存胜率。
+  String get _currentBranchKey => _pathToBranchKey(_path);
+
+  /// 从根到 path 的子索引序列；主战线（全 0）返回 ""，否则返回到首次非 0 子索引为止的 key。
+  String _pathToBranchKey(List<SgfNode> path) {
+    if (_sgf == null || path.isEmpty) {
+      return '';
+    }
+    final List<int> indices = <int>[];
+    SgfNode parent = _sgf!.root;
+    for (final SgfNode node in path) {
+      final int i = parent.children.indexOf(node);
+      if (i < 0) {
+        break;
+      }
+      indices.add(i);
+      parent = node;
+    }
+    if (indices.isEmpty) return '';
+    final int firstNonZero = indices.indexWhere((int i) => i != 0);
+    if (firstNonZero < 0) {
+      return '';
+    }
+    return indices.sublist(0, firstNonZero + 1).join('-');
+  }
+
+  /// 当前分支的胜率 Map，用于显示与续下传入。
+  Map<int, double> get _winratesForCurrentBranch {
+    final Map<int, double>? branch = _winratesByBranch[_currentBranchKey];
+    if (branch != null && branch.isNotEmpty) {
+      return branch;
+    }
+    return _winrates;
+  }
+
+  /// 变化图胜率曲线用色（主战线用 primary，其余循环使用），支持任意数量分支。
+  static const List<Color> _variationChartColors = <Color>[
+    Colors.orange,
+    Colors.green,
+    Colors.purple,
+    Colors.teal,
+    Colors.deepOrange,
+    Colors.indigo,
+    Colors.amber,
+    Colors.cyan,
+    Colors.pink,
+    Colors.lime,
+    Colors.brown,
+    Colors.blueGrey,
+  ];
+
+  /// 构建多分支胜率曲线列表（主战线 + 各变化图），供图表多色绘制。
+  /// 主战线：整条 1..N。变化图：仅从分支点开始的那几手，例如第31手有 5 手变化 → 只画 31–36 一段曲线。
+  List<WinrateSeries> _buildWinrateSeries(BuildContext context) {
+    if (_winratesByBranch.isEmpty) {
+      return <WinrateSeries>[];
+    }
+    final List<String> keys = _winratesByBranch.keys
+        .where((String k) => _winratesByBranch[k]!.isNotEmpty)
+        .toList()
+      ..sort((String a, String b) {
+        if (a.isEmpty) return -1;
+        if (b.isEmpty) return 1;
+        return a.compareTo(b);
+      });
+    if (keys.isEmpty) return <WinrateSeries>[];
+    final Color primary = Theme.of(context).colorScheme.primary;
+    final List<WinrateSeries> result = <WinrateSeries>[];
+    for (int i = 0; i < keys.length; i++) {
+      final String key = keys[i];
+      Map<int, double> data = _winratesByBranch[key]!;
+      if (key.isNotEmpty) {
+        final int branchTurn = key.split('-').length;
+        data = Map<int, double>.fromEntries(
+          data.entries.where((MapEntry<int, double> e) => e.key >= branchTurn),
+        );
+      }
+      if (data.length < 2) continue;
+      final Color color = key.isEmpty
+          ? primary
+          : _variationChartColors[(i - 1) % _variationChartColors.length];
+      result.add(WinrateSeries(
+        winrates: data,
+        color: color,
+        label: key.isEmpty ? null : key,
+      ));
+    }
+    return result;
+  }
+
   /// 将当前 SGF 树序列化并写回记录（仅当 _canSaveRecord 时）。
   Future<void> _persistSgf() async {
     if (!_canSaveRecord || _sgf == null || _recordId == null) {
@@ -2034,6 +2374,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       setState(() {
         _reviewTryMode = false;
         _reviewTryState = null;
+        _reviewTryPendingConfirmTimer.cancel();
+        _reviewTryPendingPoint = null;
         _reviewHintPoints = <GoPoint>[];
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2044,6 +2386,26 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         ),
       );
     }
+  }
+
+  /// 从笔记区点击「变化图k」进入第 k 个变化分支（k≥1 表示非主线的第 k 个续着）。
+  /// 变化图链接只出现在「变化发生的那一手」的笔记里：当前手有多个续着时，笔记区显示「本手有 N 个变化图」及链接；棋谱可有多处有变化图，走到哪一手就显示哪一手的内容。
+  void _goToVariation(int childIndex) {
+    final SgfNode? node = _currentNode;
+    if (node == null ||
+        childIndex <= 0 ||
+        childIndex >= node.children.length) {
+      return;
+    }
+    setState(() {
+      _path = <SgfNode>[..._path, node.children[childIndex]];
+      _selectedVariation = 0;
+      _reviewTryMode = false;
+      _reviewTryState = null;
+      _reviewTryPendingConfirmTimer.cancel();
+      _reviewTryPendingPoint = null;
+      _reviewHintPoints = <GoPoint>[];
+    });
   }
 
   void _next() {
@@ -2057,6 +2419,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _selectedVariation = 0;
       _reviewTryMode = false;
       _reviewTryState = null;
+      _reviewTryPendingConfirmTimer.cancel();
+      _reviewTryPendingPoint = null;
       _reviewHintPoints = <GoPoint>[];
       _selectMode = false;
       _selectedIds.clear();
@@ -2072,44 +2436,67 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _selectedVariation = 0;
       _reviewTryMode = false;
       _reviewTryState = null;
+      _reviewTryPendingConfirmTimer.cancel();
+      _reviewTryPendingPoint = null;
       _reviewHintPoints = <GoPoint>[];
       _selectMode = false;
       _selectedIds.clear();
     });
   }
 
+  /// 退出变化图，回到分支点（变化图开始的那一手）。
+  void _exitVariation() {
+    if (_sgf == null || _currentBranchKey.isEmpty) return;
+    final List<SgfNode> mainLine = _sgf!.mainLineNodes();
+    final int end = _variationBranchTurn.clamp(0, mainLine.length);
+    setState(() {
+      _path = mainLine.sublist(0, end);
+      _selectedVariation = 0;
+      _reviewTryMode = false;
+      _reviewTryState = null;
+      _reviewTryPendingConfirmTimer.cancel();
+      _reviewTryPendingPoint = null;
+      _reviewHintPoints = <GoPoint>[];
+    });
+  }
+
+  /// 点击胜率图跳转：X 轴为主战线，故始终跳到主战线第 turn 手。
   void _goToTurn(int turn) {
     if (_sgf == null) {
       return;
     }
-    final List<SgfNode> line = _currentLine();
+    final List<SgfNode> mainLine = _sgf!.mainLineNodes();
     if (turn <= 0) {
       setState(() {
         _path = <SgfNode>[];
         _selectedVariation = 0;
         _reviewTryMode = false;
         _reviewTryState = null;
+        _reviewTryPendingConfirmTimer.cancel();
+        _reviewTryPendingPoint = null;
         _reviewHintPoints = <GoPoint>[];
       });
       return;
     }
-    final int end = turn.clamp(1, line.length);
+    final int end = turn.clamp(1, mainLine.length);
     setState(() {
-      _path = line.sublist(0, end);
+      _path = mainLine.sublist(0, end);
       _selectedVariation = 0;
       _reviewTryMode = false;
       _reviewTryState = null;
+      _reviewTryPendingConfirmTimer.cancel();
+      _reviewTryPendingPoint = null;
       _reviewHintPoints = <GoPoint>[];
     });
   }
 
-  /// 打谱用黑方视角生成妙手/恶手文案（与复盘 buildHints 一致）
+  /// 打谱用黑方视角生成妙手/恶手文案（与复盘 buildHints 一致）；用当前分支胜率。
   List<String> _buildReviewHints({required bool good}) {
-    if (_winrates.isEmpty) {
+    if (_winratesForCurrentBranch.isEmpty) {
       return <String>[];
     }
     final List<MoveHint> hints = _analysisService.buildHints(
-      _winrates,
+      _winratesForCurrentBranch,
       playerStone: GoStone.black,
       brilliantEpsilon: 0.05,
     );
@@ -2189,6 +2576,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     final bool compactReviewLayout = _recordId != null;
     final List<String> reviewGoodHints = _buildReviewHints(good: true);
     final List<String> reviewBadHints = _buildReviewHints(good: false);
+    final List<WinrateSeries> winrateSeriesList = _buildWinrateSeries(context);
     final Widget content = ListView(
       padding: const EdgeInsets.all(16),
       children: <Widget>[
@@ -2376,10 +2764,11 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                   ),
             hintLoading: _reviewHintLoading,
             ownershipLoading: _reviewOwnershipLoading,
-            // 传入胜率数据，让 Panel 负责渲染图表并联动
-            currentTurn: _currentTurn,
-            maxTurn: _currentLine().length,
-            winrates: _winrates,
+            // 传入胜率数据（多分支时用不同颜色）；maxTurn 固定为主战线长度，保证主战线胜率完整显示
+            currentTurn: _chartHighlightTurn,
+            maxTurn: _mainLineLength,
+            winrates: winrateSeriesList.isEmpty ? _winrates : null,
+            winrateSeries: winrateSeriesList.isEmpty ? null : winrateSeriesList,
             onTurnSelected: _goToTurn,
             onEnterTry: () {
               setState(() {
@@ -2392,21 +2781,51 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
               setState(() {
                 _reviewTryMode = false;
                 _reviewTryState = null;
+                _reviewTryPendingConfirmTimer.cancel();
+        _reviewTryPendingPoint = null;
                 _reviewHintPoints = <GoPoint>[];
               });
             },
             onSaveAsVariation: _canSaveRecord ? _saveTryAsVariation : null,
+            tentativePoint: _reviewTryMode ? _reviewTryPendingPoint : null,
+            tentativeStone: _reviewTryMode ? (_reviewTryState ?? boardState).toPlay : null,
             onTryPlay: (GoPoint p) {
-              final GoGameState cur = _reviewTryState ?? boardState;
-              try {
-                setState(() {
-                  _reviewTryState = cur.play(
-                    GoMove(player: cur.toPlay, point: p),
-                  );
-                  _reviewHintPoints = <GoPoint>[];
-                });
-                playStoneSound();
-              } catch (_) {}
+              _reviewTryPendingConfirmTimer.handleTap(
+                p,
+                _reviewTryPendingPoint,
+                (GoPoint point) {
+                  setState(() {
+                    _reviewTryPendingPoint = point;
+                    _status = _t(
+                      zh: '再次点击同一位置确认落子',
+                      en: 'Tap the same point again to confirm',
+                      ja: '同じ点を再タップで確定',
+                      ko: '같은 점을 다시 눌러 확정',
+                    );
+                  });
+                },
+                (GoPoint point) {
+                  if (_reviewTryPendingPoint != point) return;
+                  final GoGameState state = _reviewTryState ?? boardState;
+                  try {
+                    final GoGameState next = state.play(
+                      GoMove(player: state.toPlay, point: point),
+                    );
+                    _reviewTryPendingConfirmTimer.cancel();
+                    setState(() {
+                      _reviewTryPendingPoint = null;
+                      _reviewTryState = next;
+                      _reviewHintPoints = <GoPoint>[];
+                    });
+                    playStoneSound();
+                  } catch (_) {
+                    setState(() {
+                      _reviewTryPendingConfirmTimer.cancel();
+                      _reviewTryPendingPoint = null;
+                    });
+                  }
+                },
+              );
             },
             onRequestHint: () async {
               if (_reviewHintLoading || _reviewOwnershipLoading) {
@@ -2513,16 +2932,36 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                   onPressed: _path.isNotEmpty ? _prev : null,
                   icon: const Icon(Icons.chevron_left),
                 ),
+                if (_currentBranchKey.isNotEmpty)
+                  TextButton(
+                    onPressed: _exitVariation,
+                    child: Text(
+                      _t(
+                        zh: '退出变化图',
+                        en: 'Exit variation',
+                        ja: '変化図を出る',
+                        ko: '변화도 나가기',
+                      ),
+                    ),
+                  ),
                 Expanded(
                   child: Row(
                     children: <Widget>[
                       Text(
-                        _t(
-                          zh: '手数: $_currentTurn',
-                          en: 'Turn: $_currentTurn',
-                          ja: '手数: $_currentTurn',
-                          ko: '수순: $_currentTurn',
-                        ),
+                        _currentBranchKey.isEmpty
+                            ? _t(
+                                zh: '手数: $_currentTurn / $_mainLineLength',
+                                en: 'Turn: $_currentTurn / $_mainLineLength',
+                                ja: '手数: $_currentTurn / $_mainLineLength',
+                                ko: '수순: $_currentTurn / $_mainLineLength',
+                              )
+                            : _t(
+                                zh: '第 $_variationBranchTurn 手 · 变化 第 $_variationLocalTurn 手  (共 $_mainLineLength 手)',
+                                en: 'Move $_variationBranchTurn · Var $_variationLocalTurn  (of $_mainLineLength)',
+                                ja: '$_variationBranchTurn手目 · 変化 $_variationLocalTurn手  (全$_mainLineLength手)',
+                                ko: '$_variationBranchTurn수 · 변화 $_variationLocalTurn수  (총 $_mainLineLength수)',
+                              ),
+                        style: const TextStyle(fontSize: 13),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -2530,8 +2969,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                           onTap: _showFullBlackName,
                           borderRadius: BorderRadius.circular(4),
                           child: Text(
-                            _winrates.containsKey(_currentTurn)
-                                ? '${_blackWinrateLabel()}: ${(_winrates[_currentTurn]! * 100).toStringAsFixed(1)}%'
+                            _winratesForCurrentBranch.containsKey(_currentTurn)
+                                ? '${_blackWinrateLabel()}: ${(_winratesForCurrentBranch[_currentTurn]! * 100).toStringAsFixed(1)}%'
                                 : '${_blackWinrateLabel()}: --',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -2542,42 +2981,6 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                     ],
                   ),
                 ),
-                if (_currentNode != null && _currentNode!.children.length > 1)
-                  SizedBox(
-                    width: 120,
-                    child: DropdownButtonFormField<int>(
-                      initialValue: _selectedVariation.clamp(
-                        0,
-                        _currentNode!.children.length - 1,
-                      ),
-                      items: List<DropdownMenuItem<int>>.generate(
-                        _currentNode!.children.length,
-                        (int i) => DropdownMenuItem<int>(
-                          value: i,
-                          child: Text(
-                            _t(
-                              zh: '变着${i + 1}',
-                              en: 'Variation ${i + 1}',
-                              ja: '変化図${i + 1}',
-                              ko: '변화도${i + 1}',
-                            ),
-                          ),
-                        ),
-                      ),
-                      onChanged: (int? v) {
-                        if (v == null) return;
-                        setState(() => _selectedVariation = v);
-                      },
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 8,
-                        ),
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
                 IconButton(
                   onPressed:
                       (_currentNode != null &&
@@ -2594,6 +2997,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
               children: <Widget>[
                 if (_currentNode != null) ...<Widget>[
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       Text(
                         _t(zh: '笔记', en: 'Note', ja: 'メモ', ko: '메모'),
@@ -2601,11 +3005,96 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                       ),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: Text(
-                          _currentNode!.comment ?? '—',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 13),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            // 笔记区 = 当前这一手的内容。用户笔记、本手变化图链接、胜率升降分别展示。
+                            if ((_currentNode!.comment ?? '').trim().isNotEmpty)
+                              Text(
+                                _currentNode!.comment!.trim(),
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                            if (_currentNode!.children.length > 1) ...<Widget>[
+                              if ((_currentNode!.comment ?? '').trim().isNotEmpty)
+                                const SizedBox(height: 4),
+                              Text(
+                                _t(
+                                  zh: '本手有 ${_currentNode!.children.length - 1} 个变化图：',
+                                  en: '${_currentNode!.children.length - 1} variation(s) at this move:',
+                                  ja: '本手に変化図${_currentNode!.children.length - 1}件：',
+                                  ko: '이 수에 변화도 ${_currentNode!.children.length - 1}개:',
+                                ),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context).colorScheme.secondary,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 4,
+                                children: List<Widget>.generate(
+                                  _currentNode!.children.length - 1,
+                                  (int i) {
+                                    final int childIndex = i + 1;
+                                    return InkWell(
+                                      onTap: () => _goToVariation(childIndex),
+                                      borderRadius: BorderRadius.circular(4),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 2,
+                                        ),
+                                        child: Text(
+                                          _t(
+                                            zh: '变化图$childIndex',
+                                            en: 'Variation $childIndex',
+                                            ja: '変化図$childIndex',
+                                            ko: '변화도 $childIndex',
+                                          ),
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: Theme.of(context)
+                                                .colorScheme.primary,
+                                            decoration: TextDecoration.underline,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                            if (_winrateNotes[_currentBranchKey]
+                                    ?.containsKey(_currentTurn.toString()) ==
+                                true) ...<Widget>[
+                              if ((_currentNode!.comment ?? '').trim().isNotEmpty ||
+                                  _currentNode!.children.length > 1)
+                                const SizedBox(height: 4),
+                              Text(
+                                _winrateNotes[_currentBranchKey]![_currentTurn.toString()]!,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context).colorScheme.secondary,
+                                ),
+                              ),
+                            ],
+                            if ((_currentNode!.comment ?? '').trim().isEmpty &&
+                                _currentNode!.children.length <= 1 &&
+                                _winrateNotes[_currentBranchKey]
+                                    ?.containsKey(_currentTurn.toString()) !=
+                                    true)
+                              Text(
+                                '—',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Theme.of(context).hintColor,
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                       if (_canSaveRecord)
@@ -2620,7 +3109,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                   ),
                   const SizedBox(height: 8),
                 ],
-                if (_winrates.isNotEmpty) ...<Widget>[
+                if (_winratesByBranch.isNotEmpty &&
+                    _winratesByBranch.values.any(
+                        (Map<int, double> m) => m.isNotEmpty)) ...<Widget>[
                   Text(
                     _t(zh: '妙手提示', en: 'Brilliant Moves', ja: '妙手', ko: '묘수'),
                     style: Theme.of(context).textTheme.titleMedium,

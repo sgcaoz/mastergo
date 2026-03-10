@@ -15,6 +15,7 @@ import 'package:mastergo/domain/go/go_game.dart';
 import 'package:mastergo/domain/go/go_types.dart';
 import 'package:mastergo/features/common/go_board_widget.dart';
 import 'package:mastergo/features/common/ownership_result_sheet.dart';
+import 'package:mastergo/features/common/pending_confirm_timer.dart';
 import 'package:mastergo/features/common/review_board_panel.dart';
 import 'package:mastergo/infra/config/ai_profile_repository.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
@@ -451,6 +452,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
   String? _finalResultTextFromAnalysis;
   String? _resignResultText;
   GoPoint? _pendingPoint;
+  final PendingConfirmTimer _pendingConfirmTimer = PendingConfirmTimer();
   GoStone _playerStone = GoStone.black;
   GoStone _aiStone = GoStone.white;
   bool _tryMode = false;
@@ -589,6 +591,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
     unawaited(_persistSession());
     _freezeActiveClock();
     _ticker?.cancel();
+    _pendingConfirmTimer.cancel();
     super.dispose();
   }
 
@@ -671,6 +674,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
     _finalScore = null;
     _finalResultTextFromAnalysis = null;
     _resignResultText = null;
+    _pendingConfirmTimer.cancel();
     _pendingPoint = null;
     _blackWinrate = null;
     _winrateByTurn.clear();
@@ -781,6 +785,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
         );
         setState(() {
           _game = next;
+          _pendingConfirmTimer.cancel();
           _pendingPoint = null;
           _hintPoints = <GoPoint>[];
           _hintSummary = null;
@@ -817,21 +822,54 @@ class _AIBattlePageState extends State<_AIBattlePage>
           ja: '不正着手です。再選択してください',
           ko: '금수입니다. 다시 선택하세요',
         );
+        _pendingConfirmTimer.cancel();
         _pendingPoint = null;
       });
       return;
     }
 
-    if (_requireDoubleTapConfirm && _pendingPoint != point) {
-      setState(() {
-        _pendingPoint = point;
-        _status = _t(
-          zh: '再次点击同一位置确认落子',
-          en: 'Tap the same point again to confirm',
-          ja: '同じ点を再タップで確定',
-          ko: '같은 점을 다시 눌러 확정',
-        );
-      });
+    if (_requireDoubleTapConfirm) {
+      _pendingConfirmTimer.handleTap(
+        point,
+        _pendingPoint,
+        (GoPoint p) {
+          setState(() {
+            _pendingPoint = p;
+            _status = _t(
+              zh: '再次点击同一位置确认落子',
+              en: 'Tap the same point again to confirm',
+              ja: '同じ点を再タップで確定',
+              ko: '같은 점을 다시 눌러 확정',
+            );
+          });
+        },
+        (GoPoint p) {
+          if (_game == null || _pendingPoint != p || _aiThinking || _isGameOver) {
+            return;
+          }
+          final GoGameState next = _game!.play(GoMove(player: _playerStone, point: p));
+          _pendingConfirmTimer.cancel();
+          playStoneSound();
+          setState(() {
+            _applyGame(next);
+            _pendingPoint = null;
+            _hintPoints = <GoPoint>[];
+            _hintSummary = null;
+            _status = _t(
+              zh: '你已落子，AI思考中...',
+              en: 'Move played, AI thinking...',
+              ja: '着手完了、AI思考中...',
+              ko: '착수 완료, AI 생각 중...',
+            );
+          });
+          unawaited(_persistSession());
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              unawaited(_aiMove());
+            }
+          });
+        },
+      );
       return;
     }
 
@@ -881,6 +919,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
     );
     setState(() {
       _applyGame(next);
+      _pendingConfirmTimer.cancel();
       _pendingPoint = null;
       _status = _t(
         zh: '你选择了 pass',
@@ -914,6 +953,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
     );
     setState(() {
       _aiThinking = true;
+      _pendingConfirmTimer.cancel();
       _pendingPoint = null;
       _hintPoints = <GoPoint>[];
       _hintSummary = null;
@@ -1006,6 +1046,12 @@ class _AIBattlePageState extends State<_AIBattlePage>
         next = next.play(GoMove(player: _aiStone, isPass: true));
       }
 
+      // 该手胜率用当次分析返回的「最佳一手之后」的胜率，不重复调用分析
+      final double? winrateAfterAi = _winrateAfterBestMove(analyzed);
+      if (winrateAfterAi != null) {
+        _winrateByTurn[next.moves.length] = winrateAfterAi;
+      }
+
       setState(() {
         _applyGame(next);
         _status = _t(
@@ -1047,6 +1093,15 @@ class _AIBattlePageState extends State<_AIBattlePage>
     _startClockFor(state.toPlay);
   }
 
+  /// 当次分析结果中「最佳一手之后」的黑方胜率（来自 topCandidates），无则返回 null。
+  double? _winrateAfterBestMove(KatagoAnalyzeResult analyzed) {
+    if (analyzed.topCandidates.isEmpty) return null;
+    for (final KatagoMoveCandidate c in analyzed.topCandidates) {
+      if (c.move == analyzed.bestMove) return c.blackWinrate;
+    }
+    return analyzed.topCandidates.first.blackWinrate;
+  }
+
   void _maybeFinishGame() {
     if (_game == null) {
       return;
@@ -1058,8 +1113,12 @@ class _AIBattlePageState extends State<_AIBattlePage>
   }
 
   /// 终局时用局势分析（winrate/scoreLead）判定胜负，数目仅用于显示黑地/白地。
+  /// 若已认输则不再覆盖结局。
   Future<void> _finishGameWithOwnership() async {
     if (_game == null || _game!.consecutivePasses < 2) {
+      return;
+    }
+    if (_resignResultText != null) {
       return;
     }
     setState(() {
@@ -1241,6 +1300,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
     }
     setState(() {
       _game = _history.last;
+      _pendingConfirmTimer.cancel();
       _pendingPoint = null;
       _finalScore = null;
       _finalResultTextFromAnalysis = null;
@@ -1744,6 +1804,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
 
       _game = state;
       _handicapStones = handicapStones;
+      _pendingConfirmTimer.cancel();
       _pendingPoint = null;
       _blackWinrate = null;
       _hintSummary = null;
@@ -2040,6 +2101,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
       _tryMode = true;
       _tryBaseState = _game;
       _tryBaseStatus = _status;
+      _pendingConfirmTimer.cancel();
       _pendingPoint = null;
       _hintPoints = <GoPoint>[];
       _hintSummary = null;
@@ -2060,6 +2122,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
       _game = _tryBaseState;
       _tryMode = false;
       _tryBaseState = null;
+      _pendingConfirmTimer.cancel();
       _pendingPoint = null;
       _hintPoints = <GoPoint>[];
       _hintSummary = null;
