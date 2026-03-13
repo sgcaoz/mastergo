@@ -128,7 +128,8 @@ class _AIPlayPageState extends State<AIPlayPage> {
 
   RulePreset get _activeRulePreset => rulePresetFromString(_selectedRulesetId);
 
-  Future<void> _startBattle(AnalysisProfile profile) async {
+  /// 恢复对局时传入 [restoreRules]，与 session 的 ruleset/komi 对齐，避免配置不一致导致无法恢复。
+  Future<void> _startBattle(AnalysisProfile profile, {GameRules? restoreRules}) async {
     if (!context.mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -138,7 +139,7 @@ class _AIPlayPageState extends State<AIPlayPage> {
           boardSize: _boardSize,
           handicap: _handicap,
           randomFirst: true,
-          rules: _activeRulePreset.toGameRules(),
+          rules: restoreRules ?? _activeRulePreset.toGameRules(),
           preferredRestoreRecordId: widget.initialRestoreRecordId,
         ),
       ),
@@ -147,15 +148,27 @@ class _AIPlayPageState extends State<AIPlayPage> {
 
   Future<void> _autoResumeIfRequested(List<AnalysisProfile> profiles) async {
     if (_autoResumeAttempted) {
+      debugPrint('[恢复对局] 加载失败: 已尝试过，跳过');
       return;
     }
     _autoResumeAttempted = true;
     final String? recordId = widget.initialRestoreRecordId;
     if (recordId == null || recordId.isEmpty) {
+      debugPrint('[恢复对局] 加载失败: 未传入 recordId (initialRestoreRecordId 为空)');
       return;
     }
+    debugPrint('[恢复对局] 加载记录 id=$recordId');
     final GameRecord? record = await _recordRepository.loadById(recordId);
-    if (!mounted || record == null || record.sessionJson.isEmpty) {
+    if (!mounted) {
+      debugPrint('[恢复对局] 加载失败: 页面已 dispose');
+      return;
+    }
+    if (record == null) {
+      debugPrint('[恢复对局] 加载失败: 记录不存在 (loadById 返回 null)');
+      return;
+    }
+    if (record.sessionJson.isEmpty) {
+      debugPrint('[恢复对局] 加载失败: session 为空 recordId=$recordId');
       return;
     }
     try {
@@ -165,7 +178,10 @@ class _AIPlayPageState extends State<AIPlayPage> {
           (data['boardSize'] as num?)?.toInt() ?? record.boardSize;
       final int handicap = (data['handicap'] as num?)?.toInt() ?? 0;
       final String ruleset = (data['ruleset'] as String?) ?? record.ruleset;
+      final double komi = (data['komi'] as num?)?.toDouble() ?? record.komi;
+      final GameRules restoreRules = rulePresetFromString(ruleset).toGameRules(komi: komi);
       final String? profileId = data['profileId'] as String?;
+      final int moveCount = (data['moves'] as List<dynamic>?)?.length ?? 0;
       AnalysisProfile? profile;
       if (profileId != null) {
         for (final AnalysisProfile p in profiles) {
@@ -177,19 +193,24 @@ class _AIPlayPageState extends State<AIPlayPage> {
       }
       profile ??= _activeProfile;
       if (profile == null) {
+        debugPrint('[恢复对局] 加载失败: 未找到难度配置 profileId=$profileId');
         return;
       }
       if (!_boardSizes.contains(boardSize)) {
+        debugPrint('[恢复对局] 加载失败: 不支持的棋盘大小 boardSize=$boardSize (支持: $_boardSizes)');
         return;
       }
       if (!kRulePresets.any(
         (RulePreset p) => p.id == ruleset && p.supportsAiPlay,
       )) {
+        debugPrint('[恢复对局] 加载失败: 规则不支持 AI 对局 ruleset=$ruleset');
         return;
       }
       if (!mounted) {
+        debugPrint('[恢复对局] 加载失败: setState 后页面已 dispose');
         return;
       }
+      debugPrint('[恢复对局] 准备进入对局页 recordId=$recordId boardSize=$boardSize handicap=$handicap komi=$komi moves=$moveCount profile=${profile.id}');
       setState(() {
         _boardSize = boardSize;
         _handicap = handicap.clamp(0, 9);
@@ -198,10 +219,11 @@ class _AIPlayPageState extends State<AIPlayPage> {
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          unawaited(_startBattle(profile!));
+          unawaited(_startBattle(profile!, restoreRules: restoreRules));
         }
       });
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('[恢复对局] 加载失败: 异常 $e\n$st');
       return;
     }
   }
@@ -779,33 +801,53 @@ class _AIBattlePageState extends State<_AIBattlePage>
       return;
     }
     if (_tryMode) {
-      try {
-        final GoGameState next = _game!.play(
-          GoMove(player: _game!.toPlay, point: point),
-        );
-        setState(() {
-          _game = next;
-          _pendingConfirmTimer.cancel();
-          _pendingPoint = null;
-          _hintPoints = <GoPoint>[];
-          _hintSummary = null;
-          _status = _t(
-            zh: '试下中（黑白皆可走）',
-            en: 'Try mode (both sides playable)',
-            ja: '試し打ち中（黒白どちらも可）',
-            ko: '시험 수순(흑백 모두 가능)',
-          );
-        });
-      } catch (_) {
-        setState(() {
-          _status = _t(
-            zh: '试下非法落子',
-            en: 'Illegal move in try mode',
-            ja: '試し打ちで不正着手',
-            ko: '시험 수순에서 금수',
-          );
-        });
-      }
+      _pendingConfirmTimer.handleTap(
+        point,
+        _pendingPoint,
+        (GoPoint p) {
+          setState(() {
+            _pendingPoint = p;
+            _status = _t(
+              zh: '再次点击同一位置确认落子',
+              en: 'Tap the same point again to confirm',
+              ja: '同じ点を再タップで確定',
+              ko: '같은 점을 다시 눌러 확정',
+            );
+          });
+        },
+        (GoPoint p) {
+          if (_game == null || _pendingPoint != p) return;
+          try {
+            final GoGameState next = _game!.play(
+              GoMove(player: _game!.toPlay, point: p),
+            );
+            setState(() {
+              _game = next;
+              _pendingConfirmTimer.cancel();
+              _pendingPoint = null;
+              _hintPoints = <GoPoint>[];
+              _hintSummary = null;
+              _status = _t(
+                zh: '试下中（黑白皆可走）',
+                en: 'Try mode (both sides playable)',
+                ja: '試し打ち中（黒白どちらも可）',
+                ko: '시험 수순(흑백 모두 가능)',
+              );
+            });
+            playStoneSound();
+          } catch (_) {
+            setState(() {
+              _pendingPoint = null;
+              _status = _t(
+                zh: '试下非法落子',
+                en: 'Illegal move in try mode',
+                ja: '試し打ちで不正着手',
+                ko: '시험 수순에서 금수',
+              );
+            });
+          }
+        },
+      );
       return;
     }
     if (_game!.toPlay != _playerStone) {
@@ -1046,10 +1088,11 @@ class _AIBattlePageState extends State<_AIBattlePage>
         next = next.play(GoMove(player: _aiStone, isPass: true));
       }
 
-      // 该手胜率用当次分析返回的「最佳一手之后」的胜率，不重复调用分析
+      // 该手胜率用当次分析返回的「最佳一手之后」的胜率，不重复调用分析；补录为当前显示胜率，避免错位
       final double? winrateAfterAi = _winrateAfterBestMove(analyzed);
       if (winrateAfterAi != null) {
         _winrateByTurn[next.moves.length] = winrateAfterAi;
+        _blackWinrate = _normalizeBlackWinrate(winrateAfterAi, 0.0);
       }
 
       setState(() {
@@ -1612,9 +1655,8 @@ class _AIBattlePageState extends State<_AIBattlePage>
           'y': m.point?.y,
         };
       }).toList(),
-      if (_isContinuation &&
-          widget.continuationOriginalKomi == null &&
-          _history.isNotEmpty)
+      // 续下（含打谱续下）都保存起始局面，恢复对局时才能正确还原
+      if (_isContinuation && _history.isNotEmpty)
         'initialStones': _encodeInitialStonesFromState(_history.first),
       'winrateByTurn': winrateTrimmed.map(
         (int k, double v) => MapEntry<String, dynamic>(k.toString(), v),
@@ -1675,16 +1717,24 @@ class _AIBattlePageState extends State<_AIBattlePage>
 
   Future<bool> _restoreSession() async {
     if (widget.initialGameState != null) {
+      debugPrint('[恢复对局] _restoreSession 跳过: 本页为续下入口 (initialGameState 非空)');
       return false;
     }
     final String? preferredId = widget.preferredRestoreRecordId;
     if (preferredId != null && preferredId.isNotEmpty) {
+      debugPrint('[恢复对局] _restoreSession 优先恢复 preferredId=$preferredId');
       final GameRecord? preferred = await _recordRepository.loadById(
         preferredId,
       );
-      if (preferred != null && await _tryRestoreFromRecord(preferred)) {
-        return true;
+      if (preferred == null) {
+        debugPrint('[恢复对局] _restoreSession 失败: loadById(preferredId) 返回 null，不尝试其他记录');
+        return false;
       }
+      final bool ok = await _tryRestoreFromRecord(preferred);
+      debugPrint('[恢复对局] _restoreSession _tryRestoreFromRecord(preferred) => $ok');
+      if (ok) return true;
+      debugPrint('[恢复对局] _restoreSession 指定记录未恢复成功，不尝试其他记录');
+      return false;
     }
 
     final GameRecord? local = await _recordRepository.loadLatestBySource(
@@ -1701,17 +1751,22 @@ class _AIBattlePageState extends State<_AIBattlePage>
                 b.updatedAtMs.compareTo(a.updatedAtMs),
           );
 
+    debugPrint('[恢复对局] _restoreSession 候选记录数=${candidates.length}');
     for (final GameRecord record in candidates) {
       final bool restored = await _tryRestoreFromRecord(record);
+      debugPrint('[恢复对局] _restoreSession 尝试候选 id=${record.id} => $restored');
       if (restored) {
         return true;
       }
     }
+    debugPrint('[恢复对局] _restoreSession 无任何记录恢复成功');
     return false;
   }
 
   Future<bool> _tryRestoreFromRecord(GameRecord record) async {
+    debugPrint('[恢复对局] _tryRestoreFromRecord 记录 id=${record.id} status=${record.status} sessionLen=${record.sessionJson.length}');
     if (record.sessionJson.isEmpty || record.status == 'finished') {
+      debugPrint('[恢复对局] _tryRestoreFromRecord 失败: session 为空或已终局 (sessionEmpty=${record.sessionJson.isEmpty} status=${record.status})');
       return false;
     }
     try {
@@ -1719,6 +1774,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
           jsonDecode(record.sessionJson) as Map<String, dynamic>;
       if (data['finalScore'] != null ||
           (data['resignResult'] as String?) != null) {
+        debugPrint('[恢复对局] _tryRestoreFromRecord 失败: 已终局 (finalScore=${data['finalScore'] != null} resignResult=${data['resignResult'] != null})');
         return false;
       }
       final int boardSize =
@@ -1736,6 +1792,9 @@ class _AIBattlePageState extends State<_AIBattlePage>
           restoredRuleset == expectedRuleset &&
           (restoredKomi - expectedKomi).abs() < 0.01;
       if (!sameConfig) {
+        debugPrint('[恢复对局] _tryRestoreFromRecord 失败: 配置不一致 '
+            'session(boardSize=$boardSize handicap=$handicap ruleset=$restoredRuleset komi=$restoredKomi) '
+            'widget(boardSize=${widget.boardSize} handicap=${widget.handicap} ruleset=$expectedRuleset komi=$expectedKomi)');
         return false;
       }
       _recordId = record.id;
@@ -1810,6 +1869,8 @@ class _AIBattlePageState extends State<_AIBattlePage>
 
       _game = state;
       _handicapStones = handicapStones;
+      final int initialStonesCount = rawInitialStones != null && rawInitialStones.isNotEmpty ? rawInitialStones.length : 0;
+      debugPrint('[恢复对局] _tryRestoreFromRecord 成功 id=${record.id} moves=${state.moves.length} initialStones=$initialStonesCount');
       _pendingConfirmTimer.cancel();
       _pendingPoint = null;
       _blackWinrate = null;
@@ -1857,7 +1918,8 @@ class _AIBattlePageState extends State<_AIBattlePage>
       }
       _status = _localizedStatusForCurrentState(state);
       return true;
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('[恢复对局] _tryRestoreFromRecord 失败: 异常 $e\n$st');
       return false;
     }
   }
@@ -2139,9 +2201,11 @@ class _AIBattlePageState extends State<_AIBattlePage>
   }
 
   List<String> _buildHints({required bool good}) {
+    final bool firstMoveIsBlack = widget.handicap == 0;
     final List<MoveHint> hints = _analysisService.buildHints(
       _winrateByTurn,
       playerStone: _playerStone,
+      firstMoveIsBlack: firstMoveIsBlack,
       brilliantEpsilon: 0.05,
     );
     return hints
@@ -2486,7 +2550,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
                       tentativePoint: _pendingPoint,
                       tentativeStone: _pendingPoint == null
                           ? null
-                          : _playerStone,
+                          : (_tryMode ? _game?.toPlay : _playerStone),
                       hintPoints: _hintPoints,
                       padding: 14,
                     ),

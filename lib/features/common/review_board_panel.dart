@@ -29,6 +29,7 @@ class ReviewBoardPanel extends StatelessWidget {
     this.maxTurn,
     this.winrates,
     this.winrateSeries,
+    this.highlightTurnWinrate,
     this.onTurnSelected,
     this.bottomChild,
     this.hintLoading = false,
@@ -79,6 +80,8 @@ class ReviewBoardPanel extends StatelessWidget {
   final Map<int, double>? winrates;
   /// 多条胜率曲线（主战线 + 变化图分支，不同颜色）；非空时优先于 [winrates]
   final List<WinrateSeries>? winrateSeries;
+  /// 当前手黑方胜率（0..1），在竖线侧面显示
+  final double? highlightTurnWinrate;
   /// 拖动胜率图竖线时回调，用于快速跳转手数
   final ValueChanged<int>? onTurnSelected;
   /// 可选底部内容（妙手恶手、SGF 等）
@@ -195,6 +198,7 @@ class ReviewBoardPanel extends StatelessWidget {
                   : winrates,
               winrateSeries: winrateSeries,
               highlightTurn: currentTurn,
+              highlightTurnWinrate: highlightTurnWinrate,
               onTurnSelected: onTurnSelected,
             ),
           ),

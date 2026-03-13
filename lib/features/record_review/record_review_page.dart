@@ -2535,14 +2535,16 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     });
   }
 
-  /// 打谱用黑方视角生成妙手/恶手文案（与复盘 buildHints 一致）；用当前分支胜率。
+  /// 打谱用黑方视角生成妙手/恶手文案（与复盘 buildHints 一致）；用当前分支胜率。让子时先手为白，需传 firstMoveIsBlack。
   List<String> _buildReviewHints({required bool good}) {
     if (_winratesForCurrentBranch.isEmpty) {
       return <String>[];
     }
+    final bool firstMoveIsBlack = _sgf!.initialBlackStones.isEmpty;
     final List<MoveHint> hints = _analysisService.buildHints(
       _winratesForCurrentBranch,
       playerStone: GoStone.black,
+      firstMoveIsBlack: firstMoveIsBlack,
       brilliantEpsilon: 0.05,
     );
     return hints
@@ -2816,6 +2818,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
             maxTurn: _mainLineLength,
             winrates: winrateSeriesList.isEmpty ? _winrates : null,
             winrateSeries: winrateSeriesList.isEmpty ? null : winrateSeriesList,
+            highlightTurnWinrate: _winratesForCurrentBranch.containsKey(_chartHighlightTurn)
+                ? _winratesForCurrentBranch[_chartHighlightTurn]
+                : null,
             onTurnSelected: _goToTurn,
             onEnterTry: () {
               setState(() {

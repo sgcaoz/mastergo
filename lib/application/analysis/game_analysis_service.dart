@@ -68,9 +68,11 @@ class GameAnalysisService {
   static const double blunderEarlyThreshold = 0.10;
   static const double blunderLateThreshold = 0.20;
 
+  /// [firstMoveIsBlack] 若为 false 表示让子/白先（turn 1 为白），则黑在 2,4,6… 手；为 true 表示无让子（turn 1 为黑）。
   List<MoveHint> buildHints(
     Map<int, double> blackWinrateByTurn, {
     required GoStone playerStone,
+    bool firstMoveIsBlack = true,
     double blunderThreshold = 0.20,
     double brilliantEpsilon = 0.05,
     int? blunderEarlyTurnCutoff,
@@ -87,9 +89,9 @@ class GameAnalysisService {
       final int turn = turns[i];
       final double deltaBlack =
           blackWinrateByTurn[turn]! - blackWinrateByTurn[prevTurn]!;
-      final bool isPlayerTurn = playerStone == GoStone.black
-          ? turn.isOdd
-          : turn.isEven;
+      // 该手是谁下的：无让子时 turn 1=黑(odd)，让子时 turn 1=白，2=黑(even)
+      final bool isBlackTurn = firstMoveIsBlack ? turn.isOdd : turn.isEven;
+      final bool isPlayerTurn = (playerStone == GoStone.black) == isBlackTurn;
       if (!isPlayerTurn) {
         continue;
       }
