@@ -39,6 +39,7 @@ dependencies:
   http: ^1.3.0
   path: ^1.9.1
   path_provider: ^2.1.5
+  share_plus: ^10.1.4
   sqflite: ^2.4.2
   image_picker: ^1.2.1
   opencv_dart: ^2.2.1
@@ -61,7 +62,7 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: assets/images/app_icon.png
+  image_path: image.png
   min_sdk_android: 21
 
 # For information on the generic Dart part of this file, see the

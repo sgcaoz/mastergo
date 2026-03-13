@@ -128,7 +128,11 @@ class _WinratePainter extends CustomPainter {
       if (s.winrates.length < 2) {
         continue;
       }
-      final List<int> turns = s.winrates.keys.toList()..sort();
+      final List<int> turns = s.winrates.keys
+          .where((int t) => t <= maxTurn)
+          .toList()
+        ..sort();
+      if (turns.length < 2) continue;
       final Path path = Path();
       for (int i = 0; i < turns.length; i++) {
         final int t = turns[i];

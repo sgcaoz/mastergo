@@ -1591,6 +1591,12 @@ class _AIBattlePageState extends State<_AIBattlePage>
     }
     final int now = DateTime.now().millisecondsSinceEpoch;
     final int createdAt = _recordCreatedAtMs ?? now;
+    // 续下时只保存到实际手数，避免胜率曲线超出新棋谱长度（如原谱200手，从100续下到150则只保留1..150）
+    final int maxTurn = game.moves.length;
+    final Map<int, double> winrateTrimmed = <int, double>{
+      for (final MapEntry<int, double> e in _winrateByTurn.entries)
+        if (e.key >= 1 && e.key <= maxTurn) e.key: e.value,
+    };
     final Map<String, dynamic> data = <String, dynamic>{
       'boardSize': widget.boardSize,
       'handicap': widget.handicap,
@@ -1610,7 +1616,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
           widget.continuationOriginalKomi == null &&
           _history.isNotEmpty)
         'initialStones': _encodeInitialStonesFromState(_history.first),
-      'winrateByTurn': _winrateByTurn.map(
+      'winrateByTurn': winrateTrimmed.map(
         (int k, double v) => MapEntry<String, dynamic>(k.toString(), v),
       ),
       'finalScore': _finalScore == null
@@ -1656,7 +1662,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
       status: _isGameOver ? 'finished' : 'active',
       sessionJson: jsonEncode(data),
       winrateJson: jsonEncode(
-        _winrateByTurn.map(
+        winrateTrimmed.map(
           (int k, double v) => MapEntry<String, dynamic>(k.toString(), v),
         ),
       ),

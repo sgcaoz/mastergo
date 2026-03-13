@@ -141,7 +141,10 @@ class SgfParser {
         cursor.tryRead(']');
         values.add(sb.toString());
       }
-      props[key] = values;
+      // 同一属性多次出现（如 AB[dd]AB[pd]）需合并，否则让子等只保留最后一个
+      final List<String> existing = props[key] ?? <String>[];
+      existing.addAll(values);
+      props[key] = existing;
     }
     return props;
   }

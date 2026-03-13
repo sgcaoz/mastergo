@@ -178,6 +178,8 @@ class ReviewBoardPanel extends StatelessWidget {
               ko: '추천 수 승률: $hintSummary',
             ),
             style: const TextStyle(fontSize: 12),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ],
         if (maxTurn != null &&

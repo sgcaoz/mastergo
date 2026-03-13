@@ -9,6 +9,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:mastergo/app/app_i18n.dart';
 import 'package:mastergo/application/analysis/game_analysis_service.dart'
@@ -1493,6 +1494,33 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     return state;
   }
 
+  /// 导出当前棋谱为 SGF 文件并调起系统分享（无需登录）。
+  Future<void> _shareSgf() async {
+    if (_sgf == null) return;
+    try {
+      final String sgfString = serializeSgf(_sgf!);
+      final Directory dir = await getTemporaryDirectory();
+      final String path = p.join(dir.path, 'game.sgf');
+      final File file = File(path);
+      await file.writeAsString(sgfString, encoding: utf8);
+      await Share.shareXFiles(
+        <XFile>[XFile(path)],
+        text: _sgf!.gameName?.isNotEmpty == true
+            ? _sgf!.gameName
+            : _t(zh: '棋谱', en: 'SGF game record', ja: '棋譜', ko: '기보'),
+      );
+    } on Exception catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${_t(zh: '分享失败', en: 'Share failed', ja: '共有失敗', ko: '공유 실패')}: $e',
+          ),
+        ),
+      );
+    }
+  }
+
   /// 打谱续下：默认沿用原谱规则，只选难度；当前玩家先下，下一步 AI 下。
   Future<void> _openContinuePlay() async {
     final GoGameState? state = _stateAtPath();
@@ -2039,6 +2067,16 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     final List<String> moveTokens = state.moves
         .map((GoMove m) => m.toProtocolToken(_sgf!.boardSize))
         .toList();
+    final List<String> initialStones = <String>[
+      ..._sgf!.initialBlackStones.map(
+        (GoPoint p) =>
+            'B:${GoMove(player: GoStone.black, point: p).toGtp(_sgf!.boardSize)}',
+      ),
+      ..._sgf!.initialWhiteStones.map(
+        (GoPoint p) =>
+            'W:${GoMove(player: GoStone.white, point: p).toGtp(_sgf!.boardSize)}',
+      ),
+    ];
     final RulePreset preset = rulePresetFromString(_ruleset);
     final double komi =
         double.tryParse(_komiController.text) ?? preset.defaultKomi;
@@ -2053,6 +2091,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       KatagoAnalyzeRequest(
         queryId: 'review-hint-${DateTime.now().millisecondsSinceEpoch}',
         moves: moveTokens,
+        initialStones: initialStones,
         gameSetup: GameSetup(
           boardSize: _sgf!.boardSize,
           startingPlayer: gameStartingPlayer,
@@ -2177,6 +2216,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         return a.compareTo(b);
       });
     if (keys.isEmpty) return <WinrateSeries>[];
+    final int mainLen = _mainLineLength;
     final Color primary = Theme.of(context).colorScheme.primary;
     final List<WinrateSeries> result = <WinrateSeries>[];
     for (int i = 0; i < keys.length; i++) {
@@ -2185,7 +2225,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       if (key.isNotEmpty) {
         final int branchTurn = key.split('-').length;
         data = Map<int, double>.fromEntries(
-          data.entries.where((MapEntry<int, double> e) => e.key >= branchTurn),
+          data.entries.where((MapEntry<int, double> e) =>
+              e.key >= branchTurn && e.key <= mainLen),
+        );
+      } else {
+        data = Map<int, double>.fromEntries(
+          data.entries.where((MapEntry<int, double> e) => e.key <= mainLen),
         );
       }
       if (data.length < 2) continue;
@@ -2712,40 +2757,42 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           const SizedBox(height: 20),
         ],
         if (_sgf != null && boardState != null) ...<Widget>[
-          if (compactReviewLayout && _reviewProfiles.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                children: <Widget>[
-                  Text(
-                    _t(zh: '难度:', en: 'Difficulty:', ja: '難易度:', ko: '난이도:'),
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                  const SizedBox(width: 8),
-                  DropdownButton<int>(
-                    value: _reviewProfileIndex.clamp(
-                      0,
-                      _reviewProfiles.length - 1,
+          if (compactReviewLayout) ...<Widget>[
+            if (_reviewProfiles.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: <Widget>[
+                    Text(
+                      _t(zh: '难度:', en: 'Difficulty:', ja: '難易度:', ko: '난이도:'),
+                      style: const TextStyle(fontSize: 13),
                     ),
-                    isDense: true,
-                    items: List<DropdownMenuItem<int>>.generate(
-                      _reviewProfiles.length,
-                      (int i) => DropdownMenuItem<int>(
-                        value: i,
-                        child: Text(
-                          '${_s.aiProfileName(_reviewProfiles[i].id, _reviewProfiles[i].name)} (${_reviewProfiles[i].maxVisits})',
-                          style: const TextStyle(fontSize: 13),
+                    const SizedBox(width: 8),
+                    DropdownButton<int>(
+                      value: _reviewProfileIndex.clamp(
+                        0,
+                        _reviewProfiles.length - 1,
+                      ),
+                      isDense: true,
+                      items: List<DropdownMenuItem<int>>.generate(
+                        _reviewProfiles.length,
+                        (int i) => DropdownMenuItem<int>(
+                          value: i,
+                          child: Text(
+                            '${_s.aiProfileName(_reviewProfiles[i].id, _reviewProfiles[i].name)} (${_reviewProfiles[i].maxVisits})',
+                            style: const TextStyle(fontSize: 13),
+                          ),
                         ),
                       ),
+                      onChanged: (int? value) {
+                        if (value != null)
+                          setState(() => _reviewProfileIndex = value);
+                      },
                     ),
-                    onChanged: (int? value) {
-                      if (value != null)
-                        setState(() => _reviewProfileIndex = value);
-                    },
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
+          ],
           ReviewBoardPanel(
             title: null, // 隐藏标题，头部已显示棋谱信息
             state: _reviewTryState ?? boardState,
@@ -2947,21 +2994,25 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                 Expanded(
                   child: Row(
                     children: <Widget>[
-                      Text(
-                        _currentBranchKey.isEmpty
-                            ? _t(
-                                zh: '手数: $_currentTurn / $_mainLineLength',
-                                en: 'Turn: $_currentTurn / $_mainLineLength',
-                                ja: '手数: $_currentTurn / $_mainLineLength',
-                                ko: '수순: $_currentTurn / $_mainLineLength',
-                              )
-                            : _t(
-                                zh: '第 $_variationBranchTurn 手 · 变化 第 $_variationLocalTurn 手  (共 $_mainLineLength 手)',
-                                en: 'Move $_variationBranchTurn · Var $_variationLocalTurn  (of $_mainLineLength)',
-                                ja: '$_variationBranchTurn手目 · 変化 $_variationLocalTurn手  (全$_mainLineLength手)',
-                                ko: '$_variationBranchTurn수 · 변화 $_variationLocalTurn수  (총 $_mainLineLength수)',
-                              ),
-                        style: const TextStyle(fontSize: 13),
+                      Flexible(
+                        child: Text(
+                          _currentBranchKey.isEmpty
+                              ? _t(
+                                  zh: '手数: $_currentTurn / $_mainLineLength',
+                                  en: 'Turn: $_currentTurn / $_mainLineLength',
+                                  ja: '手数: $_currentTurn / $_mainLineLength',
+                                  ko: '수순: $_currentTurn / $_mainLineLength',
+                                )
+                              : _t(
+                                  zh: '第 $_variationBranchTurn 手 · 变化 第 $_variationLocalTurn 手  (共 $_mainLineLength 手)',
+                                  en: 'Move $_variationBranchTurn · Var $_variationLocalTurn  (of $_mainLineLength)',
+                                  ja: '$_variationBranchTurn手目 · 変化 $_variationLocalTurn手  (全$_mainLineLength手)',
+                                  ko: '$_variationBranchTurn수 · 변화 $_variationLocalTurn수  (총 $_mainLineLength수)',
+                                ),
+                          style: const TextStyle(fontSize: 13),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -3211,6 +3262,11 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
             _t(zh: '打谱复盘', en: 'SGF Review', ja: '棋譜復盤', ko: '기보 복기'),
           ),
           actions: <Widget>[
+            IconButton(
+              onPressed: _sgf == null ? null : _shareSgf,
+              icon: const Icon(Icons.share, size: 22),
+              tooltip: _t(zh: '分享棋谱', en: 'Share SGF', ja: '棋譜を共有', ko: '기보 공유'),
+            ),
             TextButton.icon(
               onPressed: _stateAtPath() == null ? null : _openContinuePlay,
               icon: const Icon(Icons.play_arrow, size: 20),
