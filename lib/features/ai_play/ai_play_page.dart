@@ -522,6 +522,16 @@ class _AIBattlePageState extends State<_AIBattlePage>
   DateTime? _activeClockStartedAt;
   Timer? _ticker;
 
+  // SGF 根节点策略：
+  // - original: 续下前棋谱完整，保留原根节点（KM/RU/AB/AW）+ 完整手顺
+  // - snapshot: 续下前仅有快照，根节点贴当前盘面 AB/AW，再记录后续手顺
+  // - normal: 新对局（非续下）
+  String _sgfRootMode = 'normal';
+  double? _sgfOriginalKomi;
+  String? _sgfOriginalRuleset;
+  List<GoPoint>? _sgfOriginalInitialBlack;
+  List<GoPoint>? _sgfOriginalInitialWhite;
+
   int _timeoutBudgetMs() {
     return _timeoutBudgetMsForProfile(widget.profile);
   }
@@ -577,6 +587,17 @@ class _AIBattlePageState extends State<_AIBattlePage>
     _rules = widget.handicap > 0
         ? widget.rules.copyWith(komi: 0)
         : widget.rules;
+    if (_isContinuation) {
+      if (widget.continuationOriginalKomi != null) {
+        _sgfRootMode = 'original';
+        _sgfOriginalKomi = widget.continuationOriginalKomi;
+        _sgfOriginalRuleset = widget.continuationOriginalRuleset;
+        _sgfOriginalInitialBlack = widget.continuationOriginalInitialBlack;
+        _sgfOriginalInitialWhite = widget.continuationOriginalInitialWhite;
+      } else {
+        _sgfRootMode = 'snapshot';
+      }
+    }
     _initializeGame(shouldPersist: false);
     _restoring = false;
     unawaited(_bootstrapSession());
@@ -1553,20 +1574,20 @@ class _AIBattlePageState extends State<_AIBattlePage>
         (_finalScore != null ? (_finalResultTextFromAnalysis ?? '?') : '?');
     sb.write('(;GM[1]FF[4]');
     sb.write('SZ[${widget.boardSize}]');
-    final bool useOriginalRoot = widget.continuationOriginalKomi != null;
+    final bool useOriginalRoot = _sgfRootMode == 'original';
     if (useOriginalRoot) {
-      sb.write('KM[${widget.continuationOriginalKomi}]');
-      sb.write('RU[${widget.continuationOriginalRuleset ?? _rules.ruleset}]');
-      for (final GoPoint p in widget.continuationOriginalInitialBlack ?? <GoPoint>[]) {
+      sb.write('KM[${_sgfOriginalKomi ?? _rules.komi}]');
+      sb.write('RU[${_sgfOriginalRuleset ?? _rules.ruleset}]');
+      for (final GoPoint p in _sgfOriginalInitialBlack ?? <GoPoint>[]) {
         sb.write('AB[${_toSgfCoord(p)}]');
       }
-      for (final GoPoint p in widget.continuationOriginalInitialWhite ?? <GoPoint>[]) {
+      for (final GoPoint p in _sgfOriginalInitialWhite ?? <GoPoint>[]) {
         sb.write('AW[${_toSgfCoord(p)}]');
       }
     } else {
       sb.write('KM[${_rules.komi}]');
       sb.write('RU[${_rules.ruleset}]');
-      if (_isContinuation && _history.isNotEmpty) {
+      if (_sgfRootMode == 'snapshot' && _history.isNotEmpty) {
         final GoGameState start = _history.first;
         for (int y = 0; y < start.boardSize; y++) {
           for (int x = 0; x < start.boardSize; x++) {
@@ -1626,6 +1647,28 @@ class _AIBattlePageState extends State<_AIBattlePage>
     return list;
   }
 
+  List<Map<String, dynamic>> _encodePoints(List<GoPoint>? points) {
+    if (points == null || points.isEmpty) return <Map<String, dynamic>>[];
+    return points
+        .map((GoPoint p) => <String, dynamic>{'x': p.x, 'y': p.y})
+        .toList();
+  }
+
+  List<GoPoint> _decodePoints(List<dynamic>? raw, int boardSize) {
+    if (raw == null || raw.isEmpty) return <GoPoint>[];
+    final List<GoPoint> out = <GoPoint>[];
+    for (final dynamic item in raw) {
+      final Map<String, dynamic>? m = item as Map<String, dynamic>?;
+      if (m == null) continue;
+      final int? x = (m['x'] as num?)?.toInt();
+      final int? y = (m['y'] as num?)?.toInt();
+      if (x == null || y == null) continue;
+      if (x < 0 || y < 0 || x >= boardSize || y >= boardSize) continue;
+      out.add(GoPoint(x, y));
+    }
+    return out;
+  }
+
   Future<void> _persistSession() async {
     final GoGameState? game = _game;
     if (game == null) return;
@@ -1658,6 +1701,13 @@ class _AIBattlePageState extends State<_AIBattlePage>
       // 续下（含打谱续下）都保存起始局面，恢复对局时才能正确还原
       if (_isContinuation && _history.isNotEmpty)
         'initialStones': _encodeInitialStonesFromState(_history.first),
+      'sgfRootMode': _sgfRootMode,
+      if (_sgfRootMode == 'original') ...<String, dynamic>{
+        'continuationOriginalKomi': _sgfOriginalKomi,
+        'continuationOriginalRuleset': _sgfOriginalRuleset,
+        'continuationOriginalInitialBlack': _encodePoints(_sgfOriginalInitialBlack),
+        'continuationOriginalInitialWhite': _encodePoints(_sgfOriginalInitialWhite),
+      },
       'winrateByTurn': winrateTrimmed.map(
         (int k, double v) => MapEntry<String, dynamic>(k.toString(), v),
       ),
@@ -1819,6 +1869,28 @@ class _AIBattlePageState extends State<_AIBattlePage>
       );
       final List<dynamic>? rawInitialStones =
           data['initialStones'] as List<dynamic>?;
+      _sgfRootMode = (data['sgfRootMode'] as String?) ?? 'normal';
+      if (_sgfRootMode == 'original') {
+        _sgfOriginalKomi =
+            (data['continuationOriginalKomi'] as num?)?.toDouble() ??
+            restoredKomi;
+        _sgfOriginalRuleset =
+            (data['continuationOriginalRuleset'] as String?) ??
+            restoredRuleset;
+        _sgfOriginalInitialBlack = _decodePoints(
+          data['continuationOriginalInitialBlack'] as List<dynamic>?,
+          boardSize,
+        );
+        _sgfOriginalInitialWhite = _decodePoints(
+          data['continuationOriginalInitialWhite'] as List<dynamic>?,
+          boardSize,
+        );
+      } else {
+        _sgfOriginalKomi = null;
+        _sgfOriginalRuleset = null;
+        _sgfOriginalInitialBlack = null;
+        _sgfOriginalInitialWhite = null;
+      }
       final GoStone toPlay;
       if (rawInitialStones != null && rawInitialStones.isNotEmpty) {
         for (final dynamic item in rawInitialStones) {

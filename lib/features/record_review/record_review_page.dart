@@ -420,6 +420,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   }
 
   Future<void> _openRecord(GameRecord record) async {
+    debugPrint('[复盘] openRecord id=${record.id} source=${record.source} status=${record.status}');
     if (_selectMode) {
       setState(() {
         if (_selectedIds.contains(record.id)) {
@@ -936,6 +937,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         widget.initialSgfContent!.isNotEmpty) {
       final SgfGame parsed = _sgfParser.parse(widget.initialSgfContent!);
       _sgf = parsed;
+      debugPrint('[复盘] init recordId=${widget.initialRecordId ?? '-'} mainLine=${parsed.mainLineNodes().length} ab=${parsed.initialBlackStones.length} aw=${parsed.initialWhiteStones.length}');
       _ruleset = parsed.rules.isEmpty
           ? _ruleset
           : rulePresetFromString(parsed.rules).id;
@@ -980,8 +982,25 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     try {
       final Map<String, dynamic> data =
           jsonDecode(rec.sessionJson) as Map<String, dynamic>;
+      // SGF 根节点已包含开局贴子时，不再叠加 session 初始局面，避免双重开局。
+      if (_sgf!.initialBlackStones.isNotEmpty ||
+          _sgf!.initialWhiteStones.isNotEmpty) {
+        debugPrint('[复盘] skip applyInitialStones: sgf root already has AB/AW recordId=$_recordId');
+        return;
+      }
+      final int sgfMainLine = _sgf!.mainLineNodes().length;
+      final int sessionMoves =
+          (data['moves'] as List<dynamic>? ?? const <dynamic>[]).length;
+      // SGF 主线手数与 session 一致时，说明 SGF 已自洽，补贴会造成错位。
+      if (sgfMainLine > 0 && sessionMoves > 0 && sgfMainLine == sessionMoves) {
+        debugPrint('[复盘] skip applyInitialStones: sgf/session aligned recordId=$_recordId sgfMainLine=$sgfMainLine sessionMoves=$sessionMoves');
+        return;
+      }
       final List<dynamic>? raw = data['initialStones'] as List<dynamic>?;
-      if (raw == null || raw.isEmpty) return;
+      if (raw == null || raw.isEmpty) {
+        debugPrint('[复盘] initialStones empty recordId=$_recordId');
+        return;
+      }
       final int boardSize = _sgf!.boardSize;
       final List<GoPoint> black = <GoPoint>[];
       final List<GoPoint> white = <GoPoint>[];
@@ -998,8 +1017,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           black.add(GoPoint(x, y));
         }
       }
-      if (black.isEmpty && white.isEmpty) return;
+      if (black.isEmpty && white.isEmpty) {
+        debugPrint('[复盘] initialStones parsed empty recordId=$_recordId');
+        return;
+      }
       if (!mounted) return;
+      debugPrint('[复盘] applyInitialStones recordId=$_recordId black=${black.length} white=${white.length}');
       setState(() {
         _sgf = SgfGame(
           boardSize: _sgf!.boardSize,
@@ -2456,9 +2479,11 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   void _next() {
     final SgfNode? node = _currentNode;
     if (node == null || node.children.isEmpty) {
+      debugPrint('[复盘] next blocked turn=$_currentTurn try=$_reviewTryMode hasNode=${node != null} children=${node?.children.length ?? 0}');
       return;
     }
     final int idx = _selectedVariation.clamp(0, node.children.length - 1);
+    final int from = _currentTurn;
     setState(() {
       _path = <SgfNode>[..._path, node.children[idx]];
       _selectedVariation = 0;
@@ -2470,12 +2495,15 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _selectMode = false;
       _selectedIds.clear();
     });
+    debugPrint('[复盘] next turn $from -> $_currentTurn try=$_reviewTryMode');
   }
 
   void _prev() {
     if (_path.isEmpty) {
+      debugPrint('[复盘] prev blocked turn=$_currentTurn try=$_reviewTryMode');
       return;
     }
+    final int from = _currentTurn;
     setState(() {
       _path = _path.sublist(0, _path.length - 1);
       _selectedVariation = 0;
@@ -2487,6 +2515,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _selectMode = false;
       _selectedIds.clear();
     });
+    debugPrint('[复盘] prev turn $from -> $_currentTurn try=$_reviewTryMode');
   }
 
   /// 退出变化图，回到分支点（变化图开始的那一手）。
@@ -2508,9 +2537,11 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   /// 点击胜率图跳转：X 轴为主战线，故始终跳到主战线第 turn 手。
   void _goToTurn(int turn) {
     if (_sgf == null) {
+      debugPrint('[复盘] goToTurn blocked: sgf null target=$turn');
       return;
     }
     final List<SgfNode> mainLine = _sgf!.mainLineNodes();
+    final int from = _currentTurn;
     if (turn <= 0) {
       setState(() {
         _path = <SgfNode>[];
@@ -2521,6 +2552,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         _reviewTryPendingPoint = null;
         _reviewHintPoints = <GoPoint>[];
       });
+      debugPrint('[复盘] goToTurn $from -> $_currentTurn target=$turn end=0 mainLine=${mainLine.length} try=$_reviewTryMode');
       return;
     }
     final int end = turn.clamp(1, mainLine.length);
@@ -2533,6 +2565,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _reviewTryPendingPoint = null;
       _reviewHintPoints = <GoPoint>[];
     });
+    debugPrint('[复盘] goToTurn $from -> $_currentTurn target=$turn end=$end mainLine=${mainLine.length} try=$_reviewTryMode');
   }
 
   /// 打谱用黑方视角生成妙手/恶手文案（与复盘 buildHints 一致）；用当前分支胜率。让子时先手为白，需传 firstMoveIsBlack。
