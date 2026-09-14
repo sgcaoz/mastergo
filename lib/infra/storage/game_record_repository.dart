@@ -25,6 +25,8 @@ class GameRecordRepository {
     final String path = p.join(base, 'mastergo_records.db');
     final File file = File(path);
     if (!await file.exists()) {
+      // Desktop backends may not pre-create the databases directory.
+      await Directory(p.dirname(path)).create(recursive: true);
       final ByteData data = await rootBundle.load(_seedAssetPath);
       await file.writeAsBytes(data.buffer.asUint8List());
     }

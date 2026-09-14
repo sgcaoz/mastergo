@@ -41,6 +41,9 @@ dependencies:
   path_provider: ^2.1.5
   share_plus: ^10.1.4
   sqflite: ^2.4.2
+  # Desktop (Linux/Windows/macOS) sqflite backend, used only to run the app in
+  # a desktop development environment; mobile/production paths keep sqflite.
+  sqflite_common_ffi: ^2.3.3
   image_picker: ^1.2.1
   opencv_dart: ^2.2.1
   shared_preferences: ^2.5.4
