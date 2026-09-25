@@ -407,6 +407,27 @@ class RecognizedBoard {
   final int blackCount;
   final int whiteCount;
   final List<GoPointF> corners;
+
+  RecognizedBoard copyWithBoard(List<List<GoStone?>> board) {
+    int blackCount = 0;
+    int whiteCount = 0;
+    for (final List<GoStone?> row in board) {
+      for (final GoStone? stone in row) {
+        if (stone == GoStone.black) {
+          blackCount++;
+        } else if (stone == GoStone.white) {
+          whiteCount++;
+        }
+      }
+    }
+    return RecognizedBoard(
+      boardSize: boardSize,
+      board: board,
+      blackCount: blackCount,
+      whiteCount: whiteCount,
+      corners: corners,
+    );
+  }
 }
 
 class GoPointF {

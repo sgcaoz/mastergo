@@ -1,0 +1,15 @@
+--- a/cpp/main.h
++++ b/cpp/main.h
+@@ -1,7 +1,11 @@
+ #include "core/global.h"
++#include <functional>
+ 
+ namespace MainCmds {
+-  int analysis(const std::vector<std::string>& args);
++  /** When getLine/writeLine are null, use cin/cout. Otherwise library mode. */
++  int analysis(const std::vector<std::string>& args,
++               std::function<std::string()> getLine = nullptr,
++               std::function<void(const std::string&)> writeLine = nullptr);
+   int benchmark(const std::vector<std::string>& args);
+   int benchmarknn(const std::vector<std::string>& args);
+   int contribute(const std::vector<std::string>& args);

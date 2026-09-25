@@ -1,4 +1,5 @@
-"CFBundleDisplayName" = "mastergo";
-"CFBundleName" = "mastergo";
+"CFBundleDisplayName" = "Master Go";
+"CFBundleName" = "Master Go";
 "NSCameraUsageDescription" = "Camera is used to capture the Go board for position recognition.";
+"NSPhotoLibraryUsageDescription" = "Photo library is used to select board images for position recognition.";
 "CFBundleTypeName" = "SGF Game Record";

@@ -21,6 +21,7 @@ import java.io.InputStreamReader
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 class MainActivity : FlutterActivity() {
@@ -38,6 +39,8 @@ class MainActivity : FlutterActivity() {
     private var katagoProcess: Process? = null
     private var katagoStdin: BufferedWriter? = null
     private var katagoStdout: BufferedReader? = null
+    private val stdoutLines = LinkedBlockingQueue<String>()
+    private var stdoutPump: Thread? = null
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
@@ -238,6 +241,7 @@ class MainActivity : FlutterActivity() {
             katagoProcess = process
             katagoStdin = process.outputStream.bufferedWriter()
             katagoStdout = BufferedReader(InputStreamReader(process.inputStream))
+            startStdoutPump()
             Thread.sleep(250)
             if (katagoProcess?.isAlive != true) {
                 val startupLogs = readAnyLinesWithin(1200)
@@ -287,6 +291,9 @@ class MainActivity : FlutterActivity() {
             val moveTokens = call.argument<List<String>>("moves") ?: emptyList()
             val initialStones = call.argument<List<String>>("initialStones") ?: emptyList()
             val includeOwnership = call.argument<Boolean>("includeOwnership") ?: false
+            @Suppress("UNCHECKED_CAST")
+            val analyzeTurns = (call.argument<List<*>>("analyzeTurns") ?: emptyList<Any>())
+                .mapNotNull { (it as? Number)?.toInt() }
 
             val queryObj = JSONObject().apply {
                 put("id", queryId)
@@ -296,10 +303,20 @@ class MainActivity : FlutterActivity() {
                 put("boardYSize", boardSize)
                 put("initialPlayer", initialPlayer)
                 put("maxVisits", maxVisits)
-                put("maxTime", thinkingTimeMs / 1000.0)
+                // This KataGo build rejects top-level maxTime and may never answer.
+                put("overrideSettings", JSONObject().apply {
+                    put("maxTime", thinkingTimeMs / 1000.0)
+                })
                 put("moves", parseTokenArray(moveTokens))
                 put("initialStones", parseTokenArray(initialStones))
                 put("includeOwnership", includeOwnership)
+                if (analyzeTurns.isNotEmpty()) {
+                    put("analyzeTurns", JSONArray(analyzeTurns))
+                }
+                val allowMoves = toAllowMovesJson(call.argument<List<*>>("allowMoves"))
+                if (allowMoves.length() > 0) {
+                    put("allowMoves", allowMoves)
+                }
             }
             val query = queryObj.toString()
 
@@ -309,9 +326,11 @@ class MainActivity : FlutterActivity() {
                 flush()
             }
 
-            val timeoutMs = timeoutOverrideMs?.toLong() ?: (thinkingTimeMs.toLong() * 2L)
-            val response = readJsonResponseByQueryId(queryId, timeoutMs)
-            if (response == null) {
+            val expectedCount = if (analyzeTurns.isEmpty()) 1 else analyzeTurns.size
+            val timeoutMs = timeoutOverrideMs?.toLong()
+                ?: (thinkingTimeMs.toLong() * 2L * expectedCount)
+            val responses = readJsonResponsesByQueryId(queryId, expectedCount, timeoutMs)
+            if (responses.isEmpty()) {
                 if (katagoProcess?.isAlive != true) {
                     mainHandler.post { result.error("ENGINE_DIED", "KataGo process exited during analysis", null) }
                     return
@@ -326,45 +345,31 @@ class MainActivity : FlutterActivity() {
                 }
                 return
             }
-            if (response.has("error")) {
+            val errorResponse = responses.firstOrNull { it.has("error") }
+            if (errorResponse != null) {
                 mainHandler.post {
                     result.error(
                         "ENGINE_RESPONSE_ERROR",
-                        response.optString("error", "Unknown KataGo error"),
-                        response.toString()
+                        errorResponse.optString("error", "Unknown KataGo error"),
+                        errorResponse.toString()
                     )
                 }
                 return
             }
 
-            val rootInfo = response.optJSONObject("rootInfo")
-            val moveInfos = response.optJSONArray("moveInfos")
-            val winrate = rootInfo?.optDouble("winrate", 0.5) ?: 0.5
-            val scoreLead = rootInfo?.optDouble("scoreLead", 0.0) ?: 0.0
-            val bestMove = if (moveInfos != null && moveInfos.length() > 0) {
-                moveInfos.getJSONObject(0).optString("move", "pass")
-            } else {
-                "pass"
+            if (analyzeTurns.isEmpty()) {
+                mainHandler.post { result.success(toAnalyzeResultMap(queryId, responses.first())) }
+                return
             }
-            val ownershipList = mutableListOf<Double>()
-            // Fix: ownership is a top-level field, not inside rootInfo
-            response.optJSONArray("ownership")?.let { arr ->
-                for (i in 0 until arr.length()) {
-                    ownershipList.add(arr.optDouble(i, 0.0))
-                }
+            val resultMaps = responses.map { toAnalyzeResultMap(queryId, it) }
+            mainHandler.post {
+                result.success(
+                    mapOf(
+                        "queryId" to queryId,
+                        "results" to resultMaps,
+                    )
+                )
             }
-
-            val resultMap = mutableMapOf<String, Any?>(
-                "queryId" to queryId,
-                "bestMove" to bestMove,
-                "winrate" to winrate,
-                "scoreLead" to scoreLead,
-                "rawResponse" to response.toString()
-            )
-            if (ownershipList.isNotEmpty()) {
-                resultMap["ownership"] = ownershipList
-            }
-            mainHandler.post { result.success(resultMap) }
         } catch (e: Exception) {
             mainHandler.post { result.error("ANALYZE_FAILED", e.message, null) }
         }
@@ -426,19 +431,30 @@ class MainActivity : FlutterActivity() {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    private fun readLineWithTimeout(timeoutMs: Long): String? {
-        val start = System.currentTimeMillis()
-        while (System.currentTimeMillis() - start < timeoutMs) {
-            val reader = katagoStdout
-            if (reader != null && reader.ready()) {
-                val line = reader.readLine()
-                if (line != null) {
-                    return line
+    private fun startStdoutPump() {
+        stdoutPump?.interrupt()
+        stdoutLines.clear()
+        val reader = katagoStdout ?: return
+        val pump = Thread({
+            try {
+                while (!Thread.currentThread().isInterrupted) {
+                    val line = reader.readLine() ?: break
+                    stdoutLines.offer(line)
                 }
+            } catch (_: Exception) {
             }
-            Thread.sleep(20)
+        }, "katago-stdout")
+        pump.isDaemon = true
+        stdoutPump = pump
+        pump.start()
+    }
+
+    private fun readLineWithTimeout(timeoutMs: Long): String? {
+        return try {
+            stdoutLines.poll(timeoutMs, TimeUnit.MILLISECONDS)
+        } catch (_: InterruptedException) {
+            null
         }
-        return null
     }
 
     private fun readAnyLinesWithin(timeoutMs: Long): String {
@@ -458,18 +474,67 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun cleanupEngineState() {
-        katagoStdin?.close()
-        katagoStdout?.close()
+        try {
+            katagoStdin?.close()
+        } catch (_: Exception) {
+        }
+        try {
+            katagoStdout?.close()
+        } catch (_: Exception) {
+        }
         katagoProcess?.destroy()
         katagoProcess?.waitFor(1, TimeUnit.SECONDS)
+        stdoutPump?.interrupt()
+        stdoutPump = null
+        stdoutLines.clear()
         katagoStdin = null
         katagoStdout = null
         katagoProcess = null
     }
 
+    private fun toAnalyzeResultMap(queryId: String, response: JSONObject): Map<String, Any?> {
+        val rootInfo = response.optJSONObject("rootInfo")
+        val moveInfos = response.optJSONArray("moveInfos")
+        val winrate = rootInfo?.optDouble("winrate", 0.5) ?: 0.5
+        val scoreLead = rootInfo?.optDouble("scoreLead", 0.0) ?: 0.0
+        val bestMove = if (moveInfos != null && moveInfos.length() > 0) {
+            moveInfos.getJSONObject(0).optString("move", "pass")
+        } else {
+            "pass"
+        }
+        val ownershipList = mutableListOf<Double>()
+        response.optJSONArray("ownership")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                ownershipList.add(arr.optDouble(i, 0.0))
+            }
+        }
+        val resultMap = mutableMapOf<String, Any?>(
+            "queryId" to queryId,
+            "bestMove" to bestMove,
+            "winrate" to winrate,
+            "scoreLead" to scoreLead,
+            "turnNumber" to response.optInt("turnNumber", 0),
+            "rawResponse" to response.toString()
+        )
+        if (ownershipList.isNotEmpty()) {
+            resultMap["ownership"] = ownershipList
+        }
+        return resultMap
+    }
+
     private fun readJsonResponseByQueryId(queryId: String, timeoutMs: Long): JSONObject? {
+        return readJsonResponsesByQueryId(queryId, 1, timeoutMs).firstOrNull()
+    }
+
+    private fun readJsonResponsesByQueryId(
+        queryId: String,
+        expectedCount: Int,
+        timeoutMs: Long
+    ): List<JSONObject> {
+        val found = mutableListOf<JSONObject>()
+        val seenTurns = mutableSetOf<Int>()
         val start = System.currentTimeMillis()
-        while (System.currentTimeMillis() - start < timeoutMs) {
+        while (found.size < expectedCount && System.currentTimeMillis() - start < timeoutMs) {
             val line = readLineWithTimeout(300)
             if (line.isNullOrBlank()) {
                 continue
@@ -483,17 +548,58 @@ class MainActivity : FlutterActivity() {
                 val id = obj.opt("id")?.toString() ?: ""
                 val hasError = obj.has("error")
                 val hasRootInfo = obj.has("rootInfo")
-                if (hasError && (id.isEmpty() || id == queryId)) {
-                    return obj
+                if (id.isNotEmpty() && id != queryId) {
+                    continue
                 }
-                if (hasRootInfo && (id.isEmpty() || id == queryId)) {
-                    return obj
+                if (obj.has("warning") && !hasRootInfo && !hasError) {
+                    continue
+                }
+                if (hasError) {
+                    found.add(obj)
+                    break
+                }
+                if (obj.optBoolean("isDuringSearch", false)) {
+                    continue
+                }
+                if (hasRootInfo) {
+                    val turn = if (obj.has("turnNumber")) obj.optInt("turnNumber") else found.size
+                    if (seenTurns.add(turn) || expectedCount == 1) {
+                        found.add(obj)
+                    }
                 }
             } catch (_: Exception) {
                 // Skip non-JSON logs and malformed lines.
             }
         }
-        return null
+        return found
+    }
+
+    private fun toAllowMovesJson(raw: List<*>?): JSONArray {
+        val arr = JSONArray()
+        if (raw == null) {
+            return arr
+        }
+        for (item in raw) {
+            val map = item as? Map<*, *> ?: continue
+            val movesRaw = map["moves"] as? List<*> ?: continue
+            val moves = JSONArray()
+            for (move in movesRaw) {
+                if (move is String && move.isNotEmpty()) {
+                    moves.put(move)
+                }
+            }
+            if (moves.length() == 0) {
+                continue
+            }
+            arr.put(
+                JSONObject().apply {
+                    put("player", map["player"] as? String ?: "B")
+                    put("untilDepth", (map["untilDepth"] as? Number)?.toInt() ?: 20)
+                    put("moves", moves)
+                }
+            )
+        }
+        return arr
     }
 
     private fun parseTokenArray(tokens: List<String>): JSONArray {
@@ -510,6 +616,8 @@ class MainActivity : FlutterActivity() {
         }
         return arr
     }
+
+    private val maxOpenedSgfBytes = 2 * 1024 * 1024
 
     private fun readUriToSgfContent(uri: Uri): Pair<String?, String> {
         val fileName = when (uri.scheme) {
@@ -528,14 +636,34 @@ class MainActivity : FlutterActivity() {
             "file" -> {
                 val path = uri.path ?: return Pair(null, fileName)
                 try {
-                    File(path).readText(Charsets.UTF_8)
+                    val file = File(path)
+                    if (!file.isFile || file.length() > maxOpenedSgfBytes) {
+                        return Pair(null, fileName)
+                    }
+                    file.readText(Charsets.UTF_8)
                 } catch (_: Exception) {
                     return Pair(null, fileName)
                 }
             }
             "content" -> {
                 try {
-                    contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() }
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        val buffer = java.io.ByteArrayOutputStream()
+                        val chunk = ByteArray(8192)
+                        var total = 0
+                        while (true) {
+                            val n = input.read(chunk)
+                            if (n < 0) {
+                                break
+                            }
+                            total += n
+                            if (total > maxOpenedSgfBytes) {
+                                return Pair(null, fileName)
+                            }
+                            buffer.write(chunk, 0, n)
+                        }
+                        buffer.toByteArray().decodeToString()
+                    }
                 } catch (_: Exception) {
                     null
                 }

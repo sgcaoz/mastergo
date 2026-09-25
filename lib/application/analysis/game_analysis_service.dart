@@ -1,4 +1,5 @@
 import 'package:mastergo/domain/entities/analysis_profile.dart';
+import 'package:mastergo/domain/entities/game_rules.dart';
 import 'package:mastergo/domain/entities/game_setup.dart';
 import 'package:mastergo/domain/entities/rule_presets.dart';
 import 'package:mastergo/domain/go/go_types.dart';
@@ -19,7 +20,11 @@ class MoveHint {
 }
 
 class GameAnalysisService {
-  const GameAnalysisService();
+  const GameAnalysisService({this.sequenceChunkSize = defaultSequenceChunkSize});
+
+  static const int defaultSequenceChunkSize = 12;
+
+  final int sequenceChunkSize;
 
   Future<Map<int, double>> analyzeTurns({
     required KatagoAdapter adapter,
@@ -42,7 +47,101 @@ class GameAnalysisService {
         ? moveTokens.length
         : (startTurn + maxTurnsToAnalyze - 1).clamp(0, moveTokens.length);
 
-    for (int turn = startTurn; turn <= endTurn; turn++) {
+    final List<int> turns = <int>[
+      for (int turn = startTurn; turn <= endTurn; turn++) turn,
+    ];
+    final int chunk = sequenceChunkSize < 1 ? 1 : sequenceChunkSize;
+
+    for (int offset = 0; offset < turns.length; offset += chunk) {
+      final List<int> batch = turns.sublist(
+        offset,
+        (offset + chunk).clamp(0, turns.length),
+      );
+      try {
+        final List<KatagoAnalyzeResult> results = await adapter.analyzeSequence(
+          KatagoAnalyzeRequest(
+            queryId: 'ana-${batch.first}-${DateTime.now().millisecondsSinceEpoch}',
+            moves: moveTokens,
+            initialStones: initialStones,
+            analyzeTurns: batch,
+            gameSetup: GameSetup(
+              boardSize: boardSize,
+              startingPlayer: startingPlayer,
+            ),
+            rules: rules,
+            profile: profile,
+            timeoutMs: timeoutMs ?? _timeoutForBatch(profile, batch.length),
+          ),
+        );
+        for (int i = 0; i < results.length; i++) {
+          final KatagoAnalyzeResult res = results[i];
+          final int turn = res.turnNumber ?? (i < batch.length ? batch[i] : batch.last);
+          winrates[turn] = res.winrate;
+        }
+        final int? lastTurn = winrates.keys.isEmpty
+            ? null
+            : winrates.keys.reduce((int a, int b) => a > b ? a : b);
+        if (lastTurn != null) {
+          onProgress?.call(lastTurn, moveTokens.length);
+        }
+        final Set<int> missing = batch.toSet()
+          ..removeAll(winrates.keys);
+        if (missing.isNotEmpty) {
+          await _analyzeTurnsSequentially(
+            adapter: adapter,
+            moveTokens: moveTokens,
+            boardSize: boardSize,
+            rules: rules,
+            profile: profile,
+            initialStones: initialStones,
+            startingPlayer: startingPlayer,
+            timeoutMs: timeoutMs,
+            onProgress: onProgress,
+            turns: missing.toList()..sort(),
+            winrates: winrates,
+          );
+        }
+      } catch (_) {
+        await _analyzeTurnsSequentially(
+          adapter: adapter,
+          moveTokens: moveTokens,
+          boardSize: boardSize,
+          rules: rules,
+          profile: profile,
+          initialStones: initialStones,
+          startingPlayer: startingPlayer,
+          timeoutMs: timeoutMs,
+          onProgress: onProgress,
+          turns: batch,
+          winrates: winrates,
+        );
+      }
+    }
+    return winrates;
+  }
+
+  int _timeoutForBatch(AnalysisProfile profile, int batchLength) {
+    final int perTurn = profile.thinkingTimeMs * 2;
+    return (perTurn * batchLength).clamp(perTurn, perTurn * batchLength);
+  }
+
+  Future<void> _analyzeTurnsSequentially({
+    required KatagoAdapter adapter,
+    required List<String> moveTokens,
+    required int boardSize,
+    required GameRules rules,
+    required AnalysisProfile profile,
+    required List<String> initialStones,
+    required StoneColor startingPlayer,
+    required int? timeoutMs,
+    required void Function(int turn, int total)? onProgress,
+    required List<int> turns,
+    required Map<int, double> winrates,
+  }) async {
+    for (final int turn in turns) {
+      if (winrates.containsKey(turn)) {
+        continue;
+      }
       final KatagoAnalyzeResult res = await adapter.analyze(
         KatagoAnalyzeRequest(
           queryId: 'ana-$turn-${DateTime.now().millisecondsSinceEpoch}',
@@ -60,7 +159,6 @@ class GameAnalysisService {
       winrates[turn] = res.winrate;
       onProgress?.call(turn, moveTokens.length);
     }
-    return winrates;
   }
 
   /// 前期（手数<=50）恶手：胜率跌 10%；后期：胜率跌 20%。
@@ -120,5 +218,19 @@ class GameAnalysisService {
       }
     }
     return hints;
+  }
+
+  /// The blunder with the largest winrate drop; null if none.
+  static MoveHint? worstBlunder(Iterable<MoveHint> hints) {
+    MoveHint? worst;
+    for (final MoveHint hint in hints) {
+      if (hint.kind != HintKind.blunder) {
+        continue;
+      }
+      if (worst == null || hint.deltaPlayerWinrate < worst.deltaPlayerWinrate) {
+        worst = hint;
+      }
+    }
+    return worst;
   }
 }

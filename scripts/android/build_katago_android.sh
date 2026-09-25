@@ -22,9 +22,7 @@ EIGEN_SRC="$ROOT_DIR/third_party/eigen"
 EIGEN_INSTALL="$ROOT_DIR/third_party/eigen-install"
 EIGEN_BUILD="$ROOT_DIR/build/eigen-host"
 
-if [[ ! -d "$KATAGO_SRC" ]]; then
-  git clone https://github.com/lightvector/KataGo.git "$KATAGO_SRC"
-fi
+"$ROOT_DIR/scripts/katago/apply_engine.sh"
 
 if [[ ! -d "$EIGEN_SRC" ]]; then
   git clone https://gitlab.com/libeigen/eigen.git "$EIGEN_SRC"
@@ -51,6 +49,8 @@ for ABI in $ABIS_TO_BUILD; do
     -DEigen3_DIR="$EIGEN_INSTALL/share/eigen3/cmake" \
     -DEIGEN3_INCLUDE_DIRS="$EIGEN_INSTALL/include/eigen3" \
     -DNO_GIT_REVISION=1 \
+    -DKATAGO_AUTO_FETCH_DEPS=OFF \
+    -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
     -DCMAKE_C_FLAGS="-DBYTE_ORDER=1234 -DLITTLE_ENDIAN=1234 -DBIG_ENDIAN=4321" \
     -DCMAKE_CXX_FLAGS="-DBYTE_ORDER=1234 -DLITTLE_ENDIAN=1234 -DBIG_ENDIAN=4321"
 

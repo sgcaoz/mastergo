@@ -3,14 +3,14 @@
   "models": [
     {
       "id": "standard",
-      "name": "KataGo B18",
+      "name": "KataGo B10c384",
       "engineFamily": "kata1",
       "tier": "standard",
       "assetPath": "assets/models/katago/standard.bin.gz",
-      "networkName": "kata1-b18c384nbt-s9996604416-d4316597426",
-      "sourceUrl": "https://media.katagotraining.org/uploaded/networks/models/kata1/kata1-b18c384nbt-s9996604416-d4316597426.bin.gz",
-      "sha256": "9d7a6afed8ff5b74894727e156f04f0cd36060a24824892008fbb6e0cba51f1d",
-      "notes": "B18 384 blocks, single bundle, under 200MB."
+      "networkName": "kata1-tf2-b10c384-s2941M-d5872M",
+      "sourceUrl": "https://media.katagotraining.org/uploaded/networks/models/kata1/kata1-tf2-b10c384-s2941M-d5872M.bin.gz",
+      "sha256": "8015d49bdf45854c94e5f9e22b2b70e8738d3e56a6edca730e5b82509998a5b5",
+      "notes": "Small transformer (tf2-b10c384), ~36MB, requires KataGo >= 1.17. Faster/lighter than b10c512; still stronger per visit than the old B18 conv net."
     }
   ]
 }

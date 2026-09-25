@@ -6,7 +6,7 @@ import FlutterMacOS
 import Foundation
 
 import audioplayers_darwin
-import file_picker
+import file_picker_darwin
 import file_selector_macos
 import share_plus
 import shared_preferences_foundation

@@ -17,6 +17,28 @@ class GoPoint {
 
   @override
   int get hashCode => Object.hash(x, y);
+
+  /// GTP like `D4`; `I` is skipped. Pass tokens return null.
+  static GoPoint? tryParseGtp(String gtp, int boardSize) {
+    final String token = gtp.trim();
+    if (token.isEmpty || token.toLowerCase() == 'pass') {
+      return null;
+    }
+    const String columns = 'ABCDEFGHJKLMNOPQRSTUVWXYZ';
+    if (token.length < 2) {
+      return null;
+    }
+    final int x = columns.indexOf(token.substring(0, 1).toUpperCase());
+    final int row = int.tryParse(token.substring(1)) ?? 0;
+    if (x < 0 || row <= 0) {
+      return null;
+    }
+    final int y = boardSize - row;
+    if (y < 0 || y >= boardSize) {
+      return null;
+    }
+    return GoPoint(x, y);
+  }
 }
 
 class GoMove {

@@ -12,6 +12,8 @@ class SgfGame {
     this.whiteName,
     this.gameName,
     this.result,
+    this.playerToMove,
+    this.comment,
   });
 
   final int boardSize;
@@ -24,6 +26,29 @@ class SgfGame {
   final String? whiteName;
   final String? gameName;
   final String? result;
+
+  /// Root `PL[]` if present.
+  final GoStone? playerToMove;
+
+  /// Root comment (`C[]` on the first node).
+  final String? comment;
+
+  SgfGame copyWith({double? komi, String? rules}) {
+    return SgfGame(
+      boardSize: boardSize,
+      komi: komi ?? this.komi,
+      rules: rules ?? this.rules,
+      root: root,
+      initialBlackStones: initialBlackStones,
+      initialWhiteStones: initialWhiteStones,
+      blackName: blackName,
+      whiteName: whiteName,
+      gameName: gameName,
+      result: result,
+      playerToMove: playerToMove,
+      comment: comment,
+    );
+  }
 
   List<SgfNode> mainLineNodes() {
     final List<SgfNode> nodes = <SgfNode>[];
@@ -40,6 +65,7 @@ class SgfNode {
   SgfNode({this.move, this.comment, this.moveNumber = 0});
 
   final GoMove? move;
+
   /// 节点注释（打谱笔记）。可写，保存时写回 SGF 的 C[]。
   String? comment;
   final int moveNumber;
@@ -65,7 +91,119 @@ class SgfParser {
       whiteName: meta.whiteName,
       gameName: meta.gameName,
       result: meta.result,
+      playerToMove: meta.playerToMove,
+      comment: root.comment ?? meta.comment,
     );
+  }
+
+  /// Collection files nest one problem per child tree. Each child inherits
+  /// board size from the outer root when it has no `SZ`.
+  List<SgfGame> parseCollection(String content) {
+    final _SgfCursor cursor = _SgfCursor(content);
+    cursor.skipUntil('(');
+    if (!cursor.tryRead('(')) {
+      return const <SgfGame>[];
+    }
+    while (!cursor.isEnd && cursor.peek != ';') {
+      if (cursor.peek == '(') {
+        break;
+      }
+      cursor.read();
+    }
+    Map<String, List<String>> collectionProps = <String, List<String>>{};
+    if (!cursor.isEnd && cursor.peek == ';') {
+      cursor.read();
+      collectionProps = _readNodeProps(cursor);
+    }
+    final int inheritedSize =
+        int.tryParse(
+          collectionProps['SZ']?.isNotEmpty == true
+              ? collectionProps['SZ']!.first
+              : '',
+        ) ??
+        19;
+    final List<SgfGame> games = <SgfGame>[];
+    while (!cursor.isEnd) {
+      if (cursor.peek == ')') {
+        cursor.read();
+        break;
+      }
+      if (cursor.peek == '(') {
+        final String tree = _readBalancedTree(cursor);
+        if (tree.trim().isEmpty) {
+          continue;
+        }
+        final String injectable = _ensureBoardSize(tree, inheritedSize);
+        try {
+          games.add(parse(injectable));
+        } catch (_) {
+          // Skip a malformed problem; keep the rest of the collection.
+        }
+        continue;
+      }
+      cursor.read();
+    }
+    if (games.isEmpty) {
+      final SgfGame single = parse(content);
+      if (single.initialBlackStones.isNotEmpty ||
+          single.initialWhiteStones.isNotEmpty) {
+        return <SgfGame>[single];
+      }
+    }
+    return games;
+  }
+
+  String _readBalancedTree(_SgfCursor cursor) {
+    if (cursor.isEnd || cursor.peek != '(') {
+      return '';
+    }
+    final int start = cursor._idx;
+    int depth = 0;
+    bool inBracket = false;
+    bool escape = false;
+    while (!cursor.isEnd) {
+      final String ch = cursor.read();
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch == '\\') {
+        escape = true;
+        continue;
+      }
+      if (ch == '[') {
+        inBracket = true;
+        continue;
+      }
+      if (ch == ']') {
+        inBracket = false;
+        continue;
+      }
+      if (inBracket) {
+        continue;
+      }
+      if (ch == '(') {
+        depth++;
+      } else if (ch == ')') {
+        depth--;
+        if (depth == 0) {
+          return cursor._text.substring(start, cursor._idx);
+        }
+      }
+    }
+    return cursor._text.substring(start);
+  }
+
+  String _ensureBoardSize(String tree, int boardSize) {
+    final String trimmed = tree.trim();
+    if (RegExp(r'SZ\s*\[').hasMatch(trimmed)) {
+      return trimmed;
+    }
+    final int semi = trimmed.indexOf(';');
+    if (semi < 0) {
+      return trimmed;
+    }
+    return '${trimmed.substring(0, semi + 1)}SZ[$boardSize]${trimmed.substring(semi + 1)}';
   }
 
   void _parseTree(
@@ -89,6 +227,9 @@ class SgfParser {
         if (!meta.rootSeen) {
           meta = meta.withRootProps(props);
           setMeta(meta);
+          if (props['C']?.isNotEmpty == true && current.comment == null) {
+            current.comment = props['C']!.first;
+          }
         }
         final GoMove? move = _moveFromProps(props, meta.boardSize);
         if (move != null) {
@@ -168,15 +309,16 @@ class SgfParser {
   }
 
   GoMove _moveFromRaw(GoStone stone, String raw, int boardSize) {
-    if (raw.isEmpty || raw.length < 2) {
+    if (raw.length < 2) {
       return GoMove(player: stone, isPass: true);
     }
     final int x = raw.codeUnitAt(0) - 'a'.codeUnitAt(0);
     final int y = raw.codeUnitAt(1) - 'a'.codeUnitAt(0);
-    return GoMove(
-      player: stone,
-      point: GoPoint(x.clamp(0, boardSize - 1), y.clamp(0, boardSize - 1)),
-    );
+    // 棋盘外的坐标是停着。19 路常见写法是 tt，不能收成角落上的子。
+    if (x < 0 || y < 0 || x >= boardSize || y >= boardSize) {
+      return GoMove(player: stone, isPass: true);
+    }
+    return GoMove(player: stone, point: GoPoint(x, y));
   }
 
   bool _isUpperAlpha(String c) {
@@ -197,6 +339,8 @@ class _SgfMeta {
     this.whiteName,
     this.gameName,
     this.result,
+    this.playerToMove,
+    this.comment,
   });
 
   final bool rootSeen;
@@ -209,6 +353,8 @@ class _SgfMeta {
   final String? whiteName;
   final String? gameName;
   final String? result;
+  final GoStone? playerToMove;
+  final String? comment;
 
   _SgfMeta withRootProps(Map<String, List<String>> props) {
     String? first(String key) =>
@@ -243,8 +389,24 @@ class _SgfMeta {
       whiteName: first('PW'),
       gameName: first('GN'),
       result: first('RE'),
+      playerToMove: _playerToMoveFromRaw(first('PL')),
+      comment: first('C'),
     );
   }
+}
+
+GoStone? _playerToMoveFromRaw(String? raw) {
+  if (raw == null || raw.isEmpty) {
+    return null;
+  }
+  final String token = raw.trim().toUpperCase();
+  if (token.startsWith('W')) {
+    return GoStone.white;
+  }
+  if (token.startsWith('B')) {
+    return GoStone.black;
+  }
+  return null;
 }
 
 class _SgfCursor {

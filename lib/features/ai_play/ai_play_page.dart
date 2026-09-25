@@ -13,12 +13,16 @@ import 'package:mastergo/domain/entities/game_setup.dart';
 import 'package:mastergo/domain/entities/game_record.dart';
 import 'package:mastergo/domain/go/go_game.dart';
 import 'package:mastergo/domain/go/go_types.dart';
+import 'package:mastergo/features/ai_play/unfinished_battle.dart';
 import 'package:mastergo/features/common/go_board_widget.dart';
 import 'package:mastergo/features/common/ownership_result_sheet.dart';
 import 'package:mastergo/features/common/pending_confirm_timer.dart';
 import 'package:mastergo/features/common/review_board_panel.dart';
 import 'package:mastergo/infra/config/ai_profile_repository.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
+import 'package:mastergo/infra/engine/katago/katago_engine_scope.dart';
+import 'package:mastergo/infra/debug_log.dart';
+import 'package:mastergo/infra/sound/game_audio.dart';
 import 'package:mastergo/infra/sound/stone_sound.dart';
 import 'package:mastergo/infra/storage/game_record_repository.dart';
 
@@ -41,7 +45,7 @@ class AIPlayPage extends StatefulWidget {
     List<GoPoint>? originalInitialWhite,
     Map<int, double>? prefixWinrates,
   }) async {
-    final KatagoAdapter adapter = PlatformKatagoAdapter();
+    final KatagoAdapter adapter = KatagoEngineScope.of(context);
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (BuildContext context) => _AIBattlePage(
@@ -61,7 +65,6 @@ class AIPlayPage extends StatefulWidget {
         ),
       ),
     );
-    unawaited(adapter.shutdown());
   }
 
   @override
@@ -71,15 +74,18 @@ class AIPlayPage extends StatefulWidget {
 class _AIPlayPageState extends State<AIPlayPage> {
   final AIProfileRepository _profileRepository = AIProfileRepository();
   final GameRecordRepository _recordRepository = GameRecordRepository();
-  final KatagoAdapter _katagoAdapter = PlatformKatagoAdapter();
   final List<int> _boardSizes = <int>[9, 13, 19];
   final List<AnalysisProfile> _profilesCache = <AnalysisProfile>[];
   bool _autoResumeAttempted = false;
+
+  KatagoAdapter get _katagoAdapter => KatagoEngineScope.of(context);
 
   int _boardSize = 19;
   int _handicap = 0;
   String _selectedRulesetId = 'chinese';
   String? _selectedProfileId;
+  Future<GameRecord?>? _unfinishedLookup;
+  String _unfinishedLookupKey = '';
   late AppLanguage _language;
   AppStrings get _s => AppStrings(_language);
   AppLanguage _effectiveLanguage() {
@@ -104,12 +110,6 @@ class _AIPlayPageState extends State<AIPlayPage> {
     _language = _effectiveLanguage();
   }
 
-  @override
-  void dispose() {
-    unawaited(_katagoAdapter.shutdown());
-    super.dispose();
-  }
-
   AnalysisProfile? get _activeProfile {
     if (_profilesCache.isEmpty) {
       return null;
@@ -128,8 +128,49 @@ class _AIPlayPageState extends State<AIPlayPage> {
 
   RulePreset get _activeRulePreset => rulePresetFromString(_selectedRulesetId);
 
+  BattleStrategy _currentStrategy() {
+    return BattleStrategy(
+      boardSize: _boardSize,
+      handicap: _handicap,
+      ruleset: _selectedRulesetId,
+      komi: _handicap > 0 ? 0 : _activeRulePreset.defaultKomi,
+      profileId: _selectedProfileId ?? '',
+    );
+  }
+
+  Future<GameRecord?> _findUnfinishedForCurrentStrategy() async {
+    final List<GameRecord> records = <GameRecord>[
+      ...await _recordRepository.listBySource('battle_local'),
+      ...await _recordRepository.listBySource('battle_temp'),
+    ];
+    return pickLatestUnfinishedBattle(records, _currentStrategy());
+  }
+
+  Future<GameRecord?> _unfinishedForStrategy(AnalysisProfile profile) {
+    final BattleStrategy strategy = _currentStrategy();
+    final String key =
+        '${strategy.boardSize}|${strategy.handicap}|${strategy.ruleset}|${strategy.komi}|${profile.id}';
+    if (_unfinishedLookup != null && _unfinishedLookupKey == key) {
+      return _unfinishedLookup!;
+    }
+    _unfinishedLookupKey = key;
+    _unfinishedLookup = _findUnfinishedForCurrentStrategy();
+    return _unfinishedLookup!;
+  }
+
+  void _invalidateUnfinishedLookup() {
+    _unfinishedLookup = null;
+    _unfinishedLookupKey = '';
+  }
+
   /// 恢复对局时传入 [restoreRules]，与 session 的 ruleset/komi 对齐，避免配置不一致导致无法恢复。
-  Future<void> _startBattle(AnalysisProfile profile, {GameRules? restoreRules}) async {
+  /// [startFresh] 为真时是「重开」，不接上一盘没下完的。
+  Future<void> _startBattle(
+    AnalysisProfile profile, {
+    GameRules? restoreRules,
+    bool startFresh = false,
+    String? resumeRecordId,
+  }) async {
     if (!context.mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -140,35 +181,40 @@ class _AIPlayPageState extends State<AIPlayPage> {
           handicap: _handicap,
           randomFirst: true,
           rules: restoreRules ?? _activeRulePreset.toGameRules(),
-          preferredRestoreRecordId: widget.initialRestoreRecordId,
+          startFresh: startFresh,
+          preferredRestoreRecordId: startFresh
+              ? null
+              : (resumeRecordId ?? widget.initialRestoreRecordId),
         ),
       ),
     );
+    if (!mounted) {
+      return;
+    }
+    setState(_invalidateUnfinishedLookup);
   }
 
   Future<void> _autoResumeIfRequested(List<AnalysisProfile> profiles) async {
     if (_autoResumeAttempted) {
-      debugPrint('[恢复对局] 加载失败: 已尝试过，跳过');
       return;
     }
     _autoResumeAttempted = true;
     final String? recordId = widget.initialRestoreRecordId;
     if (recordId == null || recordId.isEmpty) {
-      debugPrint('[恢复对局] 加载失败: 未传入 recordId (initialRestoreRecordId 为空)');
       return;
     }
-    debugPrint('[恢复对局] 加载记录 id=$recordId');
+    appLog('[恢复对局] 加载记录 id=$recordId');
     final GameRecord? record = await _recordRepository.loadById(recordId);
     if (!mounted) {
-      debugPrint('[恢复对局] 加载失败: 页面已 dispose');
+      appLog('[恢复对局] 加载失败: 页面已 dispose');
       return;
     }
     if (record == null) {
-      debugPrint('[恢复对局] 加载失败: 记录不存在 (loadById 返回 null)');
+      appLog('[恢复对局] 加载失败: 记录不存在 (loadById 返回 null)');
       return;
     }
     if (record.sessionJson.isEmpty) {
-      debugPrint('[恢复对局] 加载失败: session 为空 recordId=$recordId');
+      appLog('[恢复对局] 加载失败: session 为空 recordId=$recordId');
       return;
     }
     try {
@@ -179,7 +225,9 @@ class _AIPlayPageState extends State<AIPlayPage> {
       final int handicap = (data['handicap'] as num?)?.toInt() ?? 0;
       final String ruleset = (data['ruleset'] as String?) ?? record.ruleset;
       final double komi = (data['komi'] as num?)?.toDouble() ?? record.komi;
-      final GameRules restoreRules = rulePresetFromString(ruleset).toGameRules(komi: komi);
+      final GameRules restoreRules = rulePresetFromString(
+        ruleset,
+      ).toGameRules(komi: komi);
       final String? profileId = data['profileId'] as String?;
       final int moveCount = (data['moves'] as List<dynamic>?)?.length ?? 0;
       AnalysisProfile? profile;
@@ -193,24 +241,26 @@ class _AIPlayPageState extends State<AIPlayPage> {
       }
       profile ??= _activeProfile;
       if (profile == null) {
-        debugPrint('[恢复对局] 加载失败: 未找到难度配置 profileId=$profileId');
+        appLog('[恢复对局] 加载失败: 未找到难度配置 profileId=$profileId');
         return;
       }
       if (!_boardSizes.contains(boardSize)) {
-        debugPrint('[恢复对局] 加载失败: 不支持的棋盘大小 boardSize=$boardSize (支持: $_boardSizes)');
+        appLog('[恢复对局] 加载失败: 不支持的棋盘大小 boardSize=$boardSize (支持: $_boardSizes)');
         return;
       }
       if (!kRulePresets.any(
         (RulePreset p) => p.id == ruleset && p.supportsAiPlay,
       )) {
-        debugPrint('[恢复对局] 加载失败: 规则不支持 AI 对局 ruleset=$ruleset');
+        appLog('[恢复对局] 加载失败: 规则不支持 AI 对局 ruleset=$ruleset');
         return;
       }
       if (!mounted) {
-        debugPrint('[恢复对局] 加载失败: setState 后页面已 dispose');
+        appLog('[恢复对局] 加载失败: setState 后页面已 dispose');
         return;
       }
-      debugPrint('[恢复对局] 准备进入对局页 recordId=$recordId boardSize=$boardSize handicap=$handicap komi=$komi moves=$moveCount profile=${profile.id}');
+      appLog(
+        '[恢复对局] 准备进入对局页 recordId=$recordId boardSize=$boardSize handicap=$handicap komi=$komi moves=$moveCount profile=${profile.id}',
+      );
       setState(() {
         _boardSize = boardSize;
         _handicap = handicap.clamp(0, 9);
@@ -223,7 +273,7 @@ class _AIPlayPageState extends State<AIPlayPage> {
         }
       });
     } catch (e, st) {
-      debugPrint('[恢复对局] 加载失败: 异常 $e\n$st');
+      appLog('[恢复对局] 加载失败: 异常 $e\n$st');
       return;
     }
   }
@@ -269,20 +319,15 @@ class _AIPlayPageState extends State<AIPlayPage> {
             return ListView(
               padding: const EdgeInsets.all(16),
               children: <Widget>[
-                Text(
-                  _s.tabAiPlay,
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 12),
                 DropdownButtonFormField<int>(
                   initialValue: _boardSize,
                   decoration: InputDecoration(
                     border: OutlineInputBorder(),
                     labelText: _s.pick(
-                      zh: '棋盘尺寸',
+                      zh: '路数',
                       en: 'Board Size',
-                      ja: '盤サイズ',
-                      ko: '바둑판 크기',
+                      ja: '路',
+                      ko: '줄수',
                     ),
                   ),
                   items: _boardSizes.map((int s) {
@@ -375,20 +420,74 @@ class _AIPlayPageState extends State<AIPlayPage> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                FilledButton.icon(
-                  onPressed: selected == null
-                      ? null
-                      : () => _startBattle(selected),
-                  icon: const Icon(Icons.play_arrow),
-                  label: Text(
-                    _s.pick(
-                      zh: '开始对弈',
-                      en: 'Start Game',
-                      ja: '対局開始',
-                      ko: '대국 시작',
+                if (selected == null)
+                  FilledButton.icon(
+                    onPressed: null,
+                    icon: const Icon(Icons.play_arrow),
+                    label: Text(
+                      _s.pick(
+                        zh: '开始对弈',
+                        en: 'Start Game',
+                        ja: '対局開始',
+                        ko: '대국 시작',
+                      ),
                     ),
+                  )
+                else
+                  FutureBuilder<GameRecord?>(
+                    future: _unfinishedForStrategy(selected),
+                    builder:
+                        (
+                          BuildContext context,
+                          AsyncSnapshot<GameRecord?> snap,
+                        ) {
+                          final GameRecord? pending = snap.data;
+                          final bool canContinue = pending != null;
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: <Widget>[
+                              FilledButton.icon(
+                                onPressed: () => _startBattle(
+                                  selected,
+                                  resumeRecordId: pending?.id,
+                                ),
+                                icon: const Icon(Icons.play_arrow),
+                                label: Text(
+                                  canContinue
+                                      ? _s.pick(
+                                          zh: '继续对局',
+                                          en: 'Continue',
+                                          ja: '対局を続ける',
+                                          ko: '대국 이어하기',
+                                        )
+                                      : _s.pick(
+                                          zh: '开始对弈',
+                                          en: 'Start Game',
+                                          ja: '対局開始',
+                                          ko: '대국 시작',
+                                        ),
+                                ),
+                              ),
+                              if (canContinue) ...<Widget>[
+                                const SizedBox(height: 8),
+                                OutlinedButton.icon(
+                                  onPressed: () =>
+                                      _startBattle(selected, startFresh: true),
+                                  icon: const Icon(Icons.restart_alt),
+                                  label: Text(
+                                    _s.pick(
+                                      zh: '重开',
+                                      en: 'New game',
+                                      ja: '新規対局',
+                                      ko: '새로 시작',
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          );
+                        },
                   ),
-                ),
                 if (selected != null) ...<Widget>[
                   const SizedBox(height: 16),
                   Card(
@@ -398,14 +497,6 @@ class _AIPlayPageState extends State<AIPlayPage> {
                         _s.aiProfileDescription(
                           selected.id,
                           selected.description,
-                        ),
-                      ),
-                      trailing: Text(
-                        _s.pick(
-                          zh: '访问数 ${selected.maxVisits}',
-                          en: 'Visits ${selected.maxVisits}',
-                          ja: '探索数 ${selected.maxVisits}',
-                          ko: '탐색수 ${selected.maxVisits}',
                         ),
                       ),
                     ),
@@ -427,6 +518,7 @@ class _AIBattlePage extends StatefulWidget {
     required this.handicap,
     required this.randomFirst,
     required this.rules,
+    this.startFresh = false,
     this.preferredRestoreRecordId,
     this.initialGameState,
     this.continuationPrefixMoveCount = 0,
@@ -443,6 +535,9 @@ class _AIBattlePage extends StatefulWidget {
   final int handicap;
   final bool randomFirst;
   final GameRules rules;
+
+  /// 为真时不接同策略的未完成对局。
+  final bool startFresh;
   final String? preferredRestoreRecordId;
   final GoGameState? initialGameState;
   final int continuationPrefixMoveCount;
@@ -450,6 +545,7 @@ class _AIBattlePage extends StatefulWidget {
   final String? continuationOriginalRuleset;
   final List<GoPoint>? continuationOriginalInitialBlack;
   final List<GoPoint>? continuationOriginalInitialWhite;
+
   /// 打谱续下时原谱的胜率（手数 -> 黑方胜率），合并进 _winrateByTurn 并随记录保存。
   final Map<int, double>? continuationPrefixWinrates;
 
@@ -487,6 +583,8 @@ class _AIBattlePageState extends State<_AIBattlePage>
   bool _aiThinking = false;
   bool _restoring = true;
   bool _engineReady = false;
+  bool _stoneMuted = false;
+  bool _musicMuted = false;
   String _status = 'Preparing...';
   double? _blackWinrate;
   final Map<int, double> _winrateByTurn = <int, double>{};
@@ -541,7 +639,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
     return profile.thinkingTimeMs * 2;
   }
 
-  /// 前几步快速开局：手数 < 6 用 20，< 24 用 50，与难度档位（快速 20 / 挑战 50）对应。
+  /// 前几步快速开局：手数 < 6 用 20 次，< 24 用 50 次，不超过所选难度。
   /// 开局思考时间至少 10s，避免 iOS 等设备上「刚开局就超时」（原 1s 太短）。
   AnalysisProfile _effectiveProfileForTurn(int moveCount) {
     final AnalysisProfile p = widget.profile;
@@ -570,12 +668,22 @@ class _AIBattlePageState extends State<_AIBattlePage>
   bool get _isContinuation =>
       widget.initialGameState != null || widget.continuationPrefixMoveCount > 0;
 
-  int get _newMoveCount {
+  /// 续下只数新下的步；新对局数整盘。不足 21 手不记入本机棋谱。
+  int get _movesThatCount {
     final GoGameState? game = _game;
-    if (game == null) return 0;
-    return (game.moves.length - widget.continuationPrefixMoveCount)
-        .clamp(0, game.moves.length);
+    if (game == null) {
+      return 0;
+    }
+    if (!_isContinuation) {
+      return game.moves.length;
+    }
+    return (game.moves.length - widget.continuationPrefixMoveCount).clamp(
+      0,
+      game.moves.length,
+    );
   }
+
+  bool _acceptBattleSounds = true;
 
   @override
   void initState() {
@@ -601,6 +709,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
     _initializeGame(shouldPersist: false);
     _restoring = false;
     unawaited(_bootstrapSession());
+    unawaited(_prepareBattleAudio());
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
         setState(() {});
@@ -619,19 +728,59 @@ class _AIBattlePageState extends State<_AIBattlePage>
     }
   }
 
+  Future<void> _prepareBattleAudio() async {
+    await GameAudio.instance.ensureReady();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _stoneMuted = GameAudio.instance.stoneMuted;
+      _musicMuted = GameAudio.instance.musicMuted;
+    });
+    if (!mounted || !_acceptBattleSounds) {
+      return;
+    }
+    await GameAudio.instance.startPlayMusic();
+  }
+
+  Future<void> _toggleStoneAudio() async {
+    await GameAudio.instance.setStoneMuted(!_stoneMuted);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _stoneMuted = GameAudio.instance.stoneMuted;
+    });
+  }
+
+  Future<void> _toggleMusic() async {
+    await GameAudio.instance.setMusicMuted(!_musicMuted);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _musicMuted = GameAudio.instance.musicMuted;
+    });
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       unawaited(_persistSession());
+      unawaited(GameAudio.instance.pausePlayMusic());
+    } else if (state == AppLifecycleState.resumed) {
+      unawaited(GameAudio.instance.resumePlayMusic());
     }
   }
 
   @override
   void dispose() {
+    _acceptBattleSounds = false;
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_persistSession());
+    unawaited(GameAudio.instance.stopBattleSounds());
     _freezeActiveClock();
     _ticker?.cancel();
     _pendingConfirmTimer.cancel();
@@ -639,31 +788,51 @@ class _AIBattlePageState extends State<_AIBattlePage>
   }
 
   Future<void> _bootstrapSession() async {
-    final bool restored = await _restoreSession();
-    if (!mounted) return;
-    if (restored) {
-      setState(() {});
-    } else {
-      // Only persist a fresh session when no resumable game is found.
-      await _persistSession();
+    try {
+      final bool restored = await _restoreSession();
+      if (!mounted) return;
+      if (restored) {
+        setState(() {});
+      } else {
+        // Saving must not block the first move. Handicap games are AI to play,
+        // so a failed or slow save used to leave the page on "starting engine".
+        unawaited(_persistSession());
+      }
+    } catch (error, stack) {
+      appLog('[对局] 开局准备失败: $error\n$stack');
     }
-    unawaited(_ensureEngineThenMaybeAi());
+    if (!mounted) return;
+    await _ensureEngineThenMaybeAi();
   }
 
   Future<void> _ensureEngineThenMaybeAi() async {
+    Object? startError;
     try {
       await widget.adapter.ensureStarted();
-    } catch (_) {}
+    } catch (error) {
+      startError = error;
+    }
     if (!mounted) return;
+    if (startError != null) {
+      setState(() {
+        _engineReady = true;
+        _status = _t(
+          zh: '引擎启动失败',
+          en: 'Engine failed to start',
+          ja: 'エンジンの起動に失敗',
+          ko: '엔진 시작 실패',
+        );
+      });
+      return;
+    }
     setState(() {
       _engineReady = true;
     });
-    if (_game != null && !_isGameOver && _game!.toPlay == _aiStone) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          unawaited(_aiMove());
-        }
-      });
+    if (_game != null &&
+        !_isGameOver &&
+        !_tryMode &&
+        _game!.toPlay == _aiStone) {
+      await _aiMove();
     }
   }
 
@@ -700,8 +869,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
       for (final GoPoint p in handicap) {
         board[p.y][p.x] = GoStone.black;
       }
-      final GoStone toPlay =
-          handicap.isEmpty ? GoStone.black : GoStone.white;
+      final GoStone toPlay = handicap.isEmpty ? GoStone.black : GoStone.white;
       final GoGameState initial = GoGameState(
         boardSize: widget.boardSize,
         board: board,
@@ -786,7 +954,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
   (List<String> initial, List<String> moves) _kataGoTokensForState(
     GoGameState state,
   ) {
-    if (_isContinuation && _history.isNotEmpty) {
+    if (_sgfRootMode == 'snapshot' && _history.isNotEmpty) {
       final GoGameState start = _history.first;
       final List<String> initial = <String>[];
       for (int y = 0; y < start.boardSize; y++) {
@@ -800,17 +968,27 @@ class _AIBattlePageState extends State<_AIBattlePage>
         }
       }
       final List<String> moves = state.moves
-          .skip(widget.continuationPrefixMoveCount)
           .map((GoMove m) => m.toProtocolToken(widget.boardSize))
           .toList();
       return (initial, moves);
     }
-    final List<String> initial = _handicapStones
-        .map(
-          (GoPoint p) =>
-              'B:${GoMove(player: GoStone.black, point: p).toGtp(widget.boardSize)}',
-        )
-        .toList();
+    final List<String> initial = _sgfRootMode == 'original'
+        ? <String>[
+            ...(_sgfOriginalInitialBlack ?? <GoPoint>[]).map(
+              (GoPoint p) =>
+                  'B:${GoMove(player: GoStone.black, point: p).toGtp(widget.boardSize)}',
+            ),
+            ...(_sgfOriginalInitialWhite ?? <GoPoint>[]).map(
+              (GoPoint p) =>
+                  'W:${GoMove(player: GoStone.white, point: p).toGtp(widget.boardSize)}',
+            ),
+          ]
+        : _handicapStones
+              .map(
+                (GoPoint p) =>
+                    'B:${GoMove(player: GoStone.black, point: p).toGtp(widget.boardSize)}',
+              )
+              .toList();
     final List<String> moves = state.moves
         .map((GoMove m) => m.toProtocolToken(widget.boardSize))
         .toList();
@@ -839,8 +1017,9 @@ class _AIBattlePageState extends State<_AIBattlePage>
         (GoPoint p) {
           if (_game == null || _pendingPoint != p) return;
           try {
-            final GoGameState next = _game!.play(
-              GoMove(player: _game!.toPlay, point: p),
+            final GoGameState before = _game!;
+            final GoGameState next = before.play(
+              GoMove(player: before.toPlay, point: p),
             );
             setState(() {
               _game = next;
@@ -855,7 +1034,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
                 ko: '시험 수순(흑백 모두 가능)',
               );
             });
-            playStoneSound();
+            playMoveSounds(before, next);
           } catch (_) {
             setState(() {
               _pendingPoint = null;
@@ -907,12 +1086,18 @@ class _AIBattlePageState extends State<_AIBattlePage>
           });
         },
         (GoPoint p) {
-          if (_game == null || _pendingPoint != p || _aiThinking || _isGameOver) {
+          if (_game == null ||
+              _pendingPoint != p ||
+              _aiThinking ||
+              _isGameOver) {
             return;
           }
-          final GoGameState next = _game!.play(GoMove(player: _playerStone, point: p));
+          final GoGameState before = _game!;
+          final GoGameState next = before.play(
+            GoMove(player: _playerStone, point: p),
+          );
           _pendingConfirmTimer.cancel();
-          playStoneSound();
+          playMoveSounds(before, next);
           setState(() {
             _applyGame(next);
             _pendingPoint = null;
@@ -936,8 +1121,9 @@ class _AIBattlePageState extends State<_AIBattlePage>
       return;
     }
 
-    final GoGameState next = _game!.play(probe);
-    playStoneSound();
+    final GoGameState before = _game!;
+    final GoGameState next = before.play(probe);
+    playMoveSounds(before, next);
     setState(() {
       _applyGame(next);
       _pendingPoint = null;
@@ -1061,6 +1247,9 @@ class _AIBattlePageState extends State<_AIBattlePage>
           timeoutMs: _timeoutBudgetMsForProfile(effectiveProfile),
         ),
       );
+      if (!mounted || !_acceptBattleSounds) {
+        return;
+      }
 
       // Normalize BLACK-perspective winrate with scoreLead consistency check.
       _blackWinrate = _normalizeBlackWinrate(
@@ -1091,16 +1280,18 @@ class _AIBattlePageState extends State<_AIBattlePage>
       GoGameState next = _game!;
       if (aiPoint != null) {
         try {
-          next = next.play(GoMove(player: _aiStone, point: aiPoint));
-          playStoneSound();
+          final GoGameState before = next;
+          next = before.play(GoMove(player: _aiStone, point: aiPoint));
+          playMoveSounds(before, next);
         } catch (_) {
           final List<GoPoint> legal = next
-              .legalMovesForCurrentPlayer()
+              .legalMovesForCurrentPlayer(koRule: _rules.koRule)
               .toList();
           if (legal.isNotEmpty) {
             final GoPoint fallback = legal[Random().nextInt(legal.length)];
-            next = next.play(GoMove(player: _aiStone, point: fallback));
-            playStoneSound();
+            final GoGameState before = next;
+            next = before.play(GoMove(player: _aiStone, point: fallback));
+            playMoveSounds(before, next);
           } else {
             next = next.play(GoMove(player: _aiStone, isPass: true));
           }
@@ -1141,6 +1332,12 @@ class _AIBattlePageState extends State<_AIBattlePage>
           _status =
               '${_t(zh: 'AI分析失败', en: 'AI analysis failed', ja: 'AI解析失敗', ko: 'AI 분석 실패')}: [${e.code}] ${e.message ?? ''} ${details.isEmpty ? '' : '| $details'}';
         }
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _status =
+            '${_t(zh: 'AI分析失败', en: 'AI analysis failed', ja: 'AI解析失敗', ko: 'AI 분석 실패')}: $error';
       });
     } finally {
       if (mounted) {
@@ -1534,7 +1731,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
       13 => 70,
       _ => 120,
     };
-    return moveCount >= threshold && aiWinrate < 0.05;
+    return moveCount >= threshold && aiWinrate < 0.02;
   }
 
   double _normalizeBlackWinrate(double rawWinrate, double scoreLead) {
@@ -1636,11 +1833,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
       for (int x = 0; x < state.boardSize; x++) {
         final GoStone? s = state.board[y][x];
         if (s != null) {
-          list.add(<String, dynamic>{
-            'player': s.name,
-            'x': x,
-            'y': y,
-          });
+          list.add(<String, dynamic>{'player': s.name, 'x': x, 'y': y});
         }
       }
     }
@@ -1672,7 +1865,13 @@ class _AIBattlePageState extends State<_AIBattlePage>
   Future<void> _persistSession() async {
     final GoGameState? game = _game;
     if (game == null) return;
-    if (_isContinuation && _newMoveCount <= 20) {
+    // 空局和不足 21 手都不进本机棋谱。悔棋退回这个手数时，把已经记下的删掉。
+    if (game.moves.isEmpty || _movesThatCount < kMinRecordedBattleMoves) {
+      final String? shortId = _recordId;
+      _recordId = null;
+      if (shortId != null) {
+        await _recordRepository.deleteById(shortId);
+      }
       return;
     }
     final int now = DateTime.now().millisecondsSinceEpoch;
@@ -1698,15 +1897,19 @@ class _AIBattlePageState extends State<_AIBattlePage>
           'y': m.point?.y,
         };
       }).toList(),
-      // 续下（含打谱续下）都保存起始局面，恢复对局时才能正确还原
-      if (_isContinuation && _history.isNotEmpty)
+      // 仅「拍照识谱续下」保存快照开局；完整棋谱续下保留完整手顺。
+      if (_sgfRootMode == 'snapshot' && _history.isNotEmpty)
         'initialStones': _encodeInitialStonesFromState(_history.first),
       'sgfRootMode': _sgfRootMode,
       if (_sgfRootMode == 'original') ...<String, dynamic>{
         'continuationOriginalKomi': _sgfOriginalKomi,
         'continuationOriginalRuleset': _sgfOriginalRuleset,
-        'continuationOriginalInitialBlack': _encodePoints(_sgfOriginalInitialBlack),
-        'continuationOriginalInitialWhite': _encodePoints(_sgfOriginalInitialWhite),
+        'continuationOriginalInitialBlack': _encodePoints(
+          _sgfOriginalInitialBlack,
+        ),
+        'continuationOriginalInitialWhite': _encodePoints(
+          _sgfOriginalInitialWhite,
+        ),
       },
       'winrateByTurn': winrateTrimmed.map(
         (int k, double v) => MapEntry<String, dynamic>(k.toString(), v),
@@ -1733,11 +1936,8 @@ class _AIBattlePageState extends State<_AIBattlePage>
     };
     final String id = _recordId ?? _recordRepository.newId(prefix: 'battle');
     _recordId = id;
-    final int effectiveMoveCount =
-        _isContinuation ? _newMoveCount : game.moves.length;
-    final String source = effectiveMoveCount > 20
-        ? 'battle_local'
-        : 'battle_temp';
+    // 只要保存，就进本机棋谱。未下完的对局也能在列表里恢复。
+    final String source = 'battle_local';
     final GameRecord record = GameRecord(
       id: id,
       source: source,
@@ -1766,57 +1966,64 @@ class _AIBattlePageState extends State<_AIBattlePage>
   }
 
   Future<bool> _restoreSession() async {
+    if (widget.startFresh) {
+      appLog('[恢复对局] _restoreSession 跳过: 重开');
+      return false;
+    }
     if (widget.initialGameState != null) {
-      debugPrint('[恢复对局] _restoreSession 跳过: 本页为续下入口 (initialGameState 非空)');
+      appLog('[恢复对局] _restoreSession 跳过: 本页为续下入口 (initialGameState 非空)');
       return false;
     }
     final String? preferredId = widget.preferredRestoreRecordId;
     if (preferredId != null && preferredId.isNotEmpty) {
-      debugPrint('[恢复对局] _restoreSession 优先恢复 preferredId=$preferredId');
+      appLog('[恢复对局] _restoreSession 优先恢复 preferredId=$preferredId');
       final GameRecord? preferred = await _recordRepository.loadById(
         preferredId,
       );
       if (preferred == null) {
-        debugPrint('[恢复对局] _restoreSession 失败: loadById(preferredId) 返回 null，不尝试其他记录');
+        appLog(
+          '[恢复对局] _restoreSession 失败: loadById(preferredId) 返回 null，不尝试其他记录',
+        );
         return false;
       }
       final bool ok = await _tryRestoreFromRecord(preferred);
-      debugPrint('[恢复对局] _restoreSession _tryRestoreFromRecord(preferred) => $ok');
+      appLog('[恢复对局] _restoreSession _tryRestoreFromRecord(preferred) => $ok');
       if (ok) return true;
-      debugPrint('[恢复对局] _restoreSession 指定记录未恢复成功，不尝试其他记录');
+      appLog('[恢复对局] _restoreSession 指定记录未恢复成功，不尝试其他记录');
       return false;
     }
 
-    final GameRecord? local = await _recordRepository.loadLatestBySource(
-      'battle_local',
+    final List<GameRecord> records = <GameRecord>[
+      ...await _recordRepository.listBySource('battle_local'),
+      ...await _recordRepository.listBySource('battle_temp'),
+    ];
+    final GameRecord? match = pickLatestUnfinishedBattle(
+      records,
+      BattleStrategy(
+        boardSize: widget.boardSize,
+        handicap: widget.handicap,
+        ruleset: widget.rules.ruleset,
+        komi: widget.handicap > 0 ? 0 : widget.rules.komi,
+        profileId: widget.profile.id,
+      ),
     );
-    final GameRecord? temp = await _recordRepository.loadLatestBySource(
-      'battle_temp',
-    );
-    final List<GameRecord> candidates =
-        <GameRecord>[if (local != null) local, if (temp != null) temp]
-          ..removeWhere((GameRecord r) => r.id == preferredId)
-          ..sort(
-            (GameRecord a, GameRecord b) =>
-                b.updatedAtMs.compareTo(a.updatedAtMs),
-          );
-
-    debugPrint('[恢复对局] _restoreSession 候选记录数=${candidates.length}');
-    for (final GameRecord record in candidates) {
-      final bool restored = await _tryRestoreFromRecord(record);
-      debugPrint('[恢复对局] _restoreSession 尝试候选 id=${record.id} => $restored');
-      if (restored) {
-        return true;
-      }
+    if (match == null) {
+      appLog('[恢复对局] _restoreSession 同策略没有没下完的对局');
+      return false;
     }
-    debugPrint('[恢复对局] _restoreSession 无任何记录恢复成功');
-    return false;
+    final bool restored = await _tryRestoreFromRecord(match);
+    appLog('[恢复对局] _restoreSession 同策略未完成 id=${match.id} => $restored');
+    return restored;
   }
 
   Future<bool> _tryRestoreFromRecord(GameRecord record) async {
-    debugPrint('[恢复对局] _tryRestoreFromRecord 记录 id=${record.id} status=${record.status} sessionLen=${record.sessionJson.length}');
+    appLog(
+      '[恢复对局] _tryRestoreFromRecord 记录 id=${record.id} status=${record.status} sessionLen=${record.sessionJson.length}',
+    );
     if (record.sessionJson.isEmpty || record.status == 'finished') {
-      debugPrint('[恢复对局] _tryRestoreFromRecord 失败: session 为空或已终局 (sessionEmpty=${record.sessionJson.isEmpty} status=${record.status})');
+      appLog(
+        '[恢复对局] _tryRestoreFromRecord 失败: session 为空或已终局 (sessionEmpty=${record.sessionJson.isEmpty} status=${record.status})',
+      );
       return false;
     }
     try {
@@ -1824,7 +2031,9 @@ class _AIBattlePageState extends State<_AIBattlePage>
           jsonDecode(record.sessionJson) as Map<String, dynamic>;
       if (data['finalScore'] != null ||
           (data['resignResult'] as String?) != null) {
-        debugPrint('[恢复对局] _tryRestoreFromRecord 失败: 已终局 (finalScore=${data['finalScore'] != null} resignResult=${data['resignResult'] != null})');
+        appLog(
+          '[恢复对局] _tryRestoreFromRecord 失败: 已终局 (finalScore=${data['finalScore'] != null} resignResult=${data['resignResult'] != null})',
+        );
         return false;
       }
       final int boardSize =
@@ -1842,9 +2051,11 @@ class _AIBattlePageState extends State<_AIBattlePage>
           restoredRuleset == expectedRuleset &&
           (restoredKomi - expectedKomi).abs() < 0.01;
       if (!sameConfig) {
-        debugPrint('[恢复对局] _tryRestoreFromRecord 失败: 配置不一致 '
-            'session(boardSize=$boardSize handicap=$handicap ruleset=$restoredRuleset komi=$restoredKomi) '
-            'widget(boardSize=${widget.boardSize} handicap=${widget.handicap} ruleset=$expectedRuleset komi=$expectedKomi)');
+        appLog(
+          '[恢复对局] _tryRestoreFromRecord 失败: 配置不一致 '
+          'session(boardSize=$boardSize handicap=$handicap ruleset=$restoredRuleset komi=$restoredKomi) '
+          'widget(boardSize=${widget.boardSize} handicap=${widget.handicap} ruleset=$expectedRuleset komi=$expectedKomi)',
+        );
         return false;
       }
       _recordId = record.id;
@@ -1863,10 +2074,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
         boardSize,
         (_) => List<GoStone?>.filled(boardSize, null),
       );
-      List<GoPoint> handicapStones = _buildHandicapPoints(
-        boardSize,
-        handicap,
-      );
+      List<GoPoint> handicapStones = _buildHandicapPoints(boardSize, handicap);
       final List<dynamic>? rawInitialStones =
           data['initialStones'] as List<dynamic>?;
       _sgfRootMode = (data['sgfRootMode'] as String?) ?? 'normal';
@@ -1875,8 +2083,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
             (data['continuationOriginalKomi'] as num?)?.toDouble() ??
             restoredKomi;
         _sgfOriginalRuleset =
-            (data['continuationOriginalRuleset'] as String?) ??
-            restoredRuleset;
+            (data['continuationOriginalRuleset'] as String?) ?? restoredRuleset;
         _sgfOriginalInitialBlack = _decodePoints(
           data['continuationOriginalInitialBlack'] as List<dynamic>?,
           boardSize,
@@ -1891,6 +2098,15 @@ class _AIBattlePageState extends State<_AIBattlePage>
         _sgfOriginalInitialBlack = null;
         _sgfOriginalInitialWhite = null;
       }
+      final List<dynamic> moves =
+          (data['moves'] as List<dynamic>? ?? <dynamic>[]);
+      GoStone? firstMovePlayer;
+      if (moves.isNotEmpty) {
+        final Map<String, dynamic> first = moves.first as Map<String, dynamic>;
+        firstMovePlayer = (first['player'] as String) == 'white'
+            ? GoStone.white
+            : GoStone.black;
+      }
       final GoStone toPlay;
       if (rawInitialStones != null && rawInitialStones.isNotEmpty) {
         for (final dynamic item in rawInitialStones) {
@@ -1898,20 +2114,35 @@ class _AIBattlePageState extends State<_AIBattlePage>
           final String player = s['player'] as String? ?? 'black';
           final int? x = (s['x'] as num?)?.toInt();
           final int? y = (s['y'] as num?)?.toInt();
-          if (x != null && y != null &&
-              x >= 0 && x < boardSize && y >= 0 && y < boardSize) {
+          if (x != null &&
+              y != null &&
+              x >= 0 &&
+              x < boardSize &&
+              y >= 0 &&
+              y < boardSize) {
             board[y][x] = player == 'white' ? GoStone.white : GoStone.black;
           }
         }
         handicapStones = <GoPoint>[];
-        toPlay = _playerStone;
+        toPlay = firstMovePlayer ?? _playerStone;
+      } else if (_sgfRootMode == 'original' &&
+          ((_sgfOriginalInitialBlack?.isNotEmpty ?? false) ||
+              (_sgfOriginalInitialWhite?.isNotEmpty ?? false))) {
+        for (final GoPoint p in _sgfOriginalInitialBlack ?? <GoPoint>[]) {
+          board[p.y][p.x] = GoStone.black;
+        }
+        for (final GoPoint p in _sgfOriginalInitialWhite ?? <GoPoint>[]) {
+          board[p.y][p.x] = GoStone.white;
+        }
+        handicapStones = <GoPoint>[];
+        toPlay = firstMovePlayer ?? GoStone.black;
       } else {
         for (final GoPoint p in handicapStones) {
           board[p.y][p.x] = GoStone.black;
         }
-        toPlay = handicapStones.isEmpty
-            ? GoStone.black
-            : GoStone.white;
+        toPlay =
+            firstMovePlayer ??
+            (handicapStones.isEmpty ? GoStone.black : GoStone.white);
       }
       GoGameState state = GoGameState(
         boardSize: boardSize,
@@ -1922,8 +2153,6 @@ class _AIBattlePageState extends State<_AIBattlePage>
         ..clear()
         ..add(state);
 
-      final List<dynamic> moves =
-          (data['moves'] as List<dynamic>? ?? <dynamic>[]);
       for (final dynamic rawMove in moves) {
         final Map<String, dynamic> m = rawMove as Map<String, dynamic>;
         final GoStone player = (m['player'] as String) == 'white'
@@ -1941,8 +2170,13 @@ class _AIBattlePageState extends State<_AIBattlePage>
 
       _game = state;
       _handicapStones = handicapStones;
-      final int initialStonesCount = rawInitialStones != null && rawInitialStones.isNotEmpty ? rawInitialStones.length : 0;
-      debugPrint('[恢复对局] _tryRestoreFromRecord 成功 id=${record.id} moves=${state.moves.length} initialStones=$initialStonesCount');
+      final int initialStonesCount =
+          rawInitialStones != null && rawInitialStones.isNotEmpty
+          ? rawInitialStones.length
+          : 0;
+      appLog(
+        '[恢复对局] _tryRestoreFromRecord 成功 id=${record.id} moves=${state.moves.length} initialStones=$initialStonesCount',
+      );
       _pendingConfirmTimer.cancel();
       _pendingPoint = null;
       _blackWinrate = null;
@@ -1991,7 +2225,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
       _status = _localizedStatusForCurrentState(state);
       return true;
     } catch (e, st) {
-      debugPrint('[恢复对局] _tryRestoreFromRecord 失败: 异常 $e\n$st');
+      appLog('[恢复对局] _tryRestoreFromRecord 失败: 异常 $e\n$st');
       return false;
     }
   }
@@ -2361,14 +2595,15 @@ class _AIBattlePageState extends State<_AIBattlePage>
                       onExitTry: () => setSheetState(exitTryAndClearHints),
                       onTryPlay: (GoPoint p) {
                         try {
+                          final GoGameState next = state.play(
+                            GoMove(player: state.toPlay, point: p),
+                          );
                           setSheetState(() {
-                            reviewTryState = state.play(
-                              GoMove(player: state.toPlay, point: p),
-                            );
+                            reviewTryState = next;
                             reviewHints = <GoPoint>[];
                             reviewHintSummary = null;
                           });
-                          playStoneSound();
+                          playMoveSounds(state, next);
                         } catch (_) {}
                       },
                       onRequestHint: () async {
@@ -2604,6 +2839,46 @@ class _AIBattlePageState extends State<_AIBattlePage>
             ),
           ],
         ),
+        actions: <Widget>[
+          IconButton(
+            tooltip: _musicMuted
+                ? _t(
+                    zh: '打开背景音乐',
+                    en: 'Turn music on',
+                    ja: 'BGMをオン',
+                    ko: '배경음 켜기',
+                  )
+                : _t(
+                    zh: '关闭背景音乐',
+                    en: 'Turn music off',
+                    ja: 'BGMをオフ',
+                    ko: '배경음 끄기',
+                  ),
+            onPressed: () {
+              unawaited(_toggleMusic());
+            },
+            icon: Icon(_musicMuted ? Icons.music_off : Icons.music_note),
+          ),
+          IconButton(
+            tooltip: _stoneMuted
+                ? _t(
+                    zh: '打开落子音',
+                    en: 'Turn stone sounds on',
+                    ja: '着手音をオン',
+                    ko: '착수음 켜기',
+                  )
+                : _t(
+                    zh: '关闭落子音',
+                    en: 'Turn stone sounds off',
+                    ja: '着手音をオフ',
+                    ko: '착수음 끄기',
+                  ),
+            onPressed: () {
+              unawaited(_toggleStoneAudio());
+            },
+            icon: Icon(_stoneMuted ? Icons.circle_outlined : Icons.circle),
+          ),
+        ],
       ),
       body: _restoring
           ? const Center(child: CircularProgressIndicator())
@@ -2612,20 +2887,17 @@ class _AIBattlePageState extends State<_AIBattlePage>
           : SafeArea(
               child: Builder(
                 builder: (BuildContext context) {
-                  final Widget board = Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
-                    child: GoBoardWidget(
-                      boardSize: game.boardSize,
-                      board: game.board,
-                      onTapPoint: _onBoardTap,
-                      lastMovePoint: _lastMovePoint(),
-                      tentativePoint: _pendingPoint,
-                      tentativeStone: _pendingPoint == null
-                          ? null
-                          : (_tryMode ? _game?.toPlay : _playerStone),
-                      hintPoints: _hintPoints,
-                      padding: 14,
-                    ),
+                  final Widget board = GoBoardWidget(
+                    boardSize: game.boardSize,
+                    board: game.board,
+                    onTapPoint: _onBoardTap,
+                    lastMovePoint: _lastMovePoint(),
+                    tentativePoint: _pendingPoint,
+                    tentativeStone: _pendingPoint == null
+                        ? null
+                        : (_tryMode ? _game?.toPlay : _playerStone),
+                    hintPoints: _hintPoints,
+                    padding: 8,
                   );
 
                   final Widget panelContent = Column(
@@ -2644,12 +2916,19 @@ class _AIBattlePageState extends State<_AIBattlePage>
                       Text(
                         _engineReady
                             ? _status
-                            : _t(
-                                zh: '启动引擎中…',
-                                en: 'Starting engine...',
-                                ja: 'エンジン起動中…',
-                                ko: '엔진 시작 중…',
-                              ),
+                            : (game.toPlay == _aiStone
+                                  ? _t(
+                                      zh: '启动引擎中，随后 AI 落子…',
+                                      en: 'Starting engine, then AI plays...',
+                                      ja: 'エンジン起動中、その後 AI が着手…',
+                                      ko: '엔진 시작 중, 이어서 AI가 둡니다…',
+                                    )
+                                  : _t(
+                                      zh: '启动引擎中…',
+                                      en: 'Starting engine...',
+                                      ja: 'エンジン起動中…',
+                                      ko: '엔진 시작 중…',
+                                    )),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -2764,7 +3043,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
                                     _finalScore == null)
                                 ? _playerPass
                                 : null,
-                            'Pass',
+                            _t(zh: '停一手', en: 'Pass', ja: 'パス', ko: '패스'),
                           ),
                         ],
                       ),
@@ -2809,7 +3088,7 @@ class _AIBattlePageState extends State<_AIBattlePage>
                             border: Border(
                               left: BorderSide(color: Colors.black12),
                             ),
-                            color: Colors.white,
+                            color: const Color(0xFFF7F0E4),
                           ),
                           child: SingleChildScrollView(child: panelContent),
                         ),
@@ -2817,19 +3096,21 @@ class _AIBattlePageState extends State<_AIBattlePage>
                     );
                   }
 
-                  return Column(
+                  return Stack(
+                    fit: StackFit.expand,
                     children: <Widget>[
-                      Expanded(child: board),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                        decoration: BoxDecoration(
-                          border: Border(
-                            top: BorderSide(color: Colors.black12),
+                      board,
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                          decoration: const BoxDecoration(
+                            color: Color(0xE6F7F0E4),
                           ),
-                          color: Colors.white,
+                          child: panelContent,
                         ),
-                        child: panelContent,
                       ),
                     ],
                   );

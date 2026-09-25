@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'package:mastergo/domain/entities/game_rules.dart';
 import 'package:mastergo/domain/go/go_types.dart';
 
+
 class GoGameState {
   GoGameState({
     required this.boardSize,
@@ -13,13 +14,25 @@ class GoGameState {
     this.consecutivePasses = 0,
     this.blackCaptures = 0,
     this.whiteCaptures = 0,
+    List<String>? positionHistory,
+    List<String>? situationalHistory,
   }) : board =
            board ??
            List<List<GoStone?>>.generate(
              boardSize,
              (_) => List<GoStone?>.filled(boardSize, null),
            ),
-       moves = moves ?? <GoMove>[];
+       moves = moves ?? <GoMove>[],
+       positionHistory = List<String>.from(positionHistory ?? const <String>[]),
+       situationalHistory =
+           List<String>.from(situationalHistory ?? const <String>[]) {
+    if (this.positionHistory.isEmpty) {
+      this.positionHistory.add(boardHash(this.board));
+    }
+    if (this.situationalHistory.isEmpty) {
+      this.situationalHistory.add(_situationalKey(boardHash(this.board), toPlay));
+    }
+  }
 
   final int boardSize;
   final List<List<GoStone?>> board;
@@ -29,26 +42,37 @@ class GoGameState {
   final int consecutivePasses;
   final int blackCaptures;
   final int whiteCaptures;
+  /// Board hashes after each position (including the initial board).
+  final List<String> positionHistory;
+  /// Board hash + side to play, used for situational superko.
+  final List<String> situationalHistory;
 
   bool inBounds(GoPoint p) =>
       p.x >= 0 && p.x < boardSize && p.y >= 0 && p.y < boardSize;
 
   GoStone? stoneAt(GoPoint p) => board[p.y][p.x];
 
-  GoGameState play(GoMove move) {
+  GoGameState play(GoMove move, {KoRule koRule = KoRule.simple}) {
     if (move.player != toPlay) {
       throw StateError('Not ${move.player} turn');
     }
     if (move.isPass) {
+      final String passHash = boardHash(board);
+      final GoStone nextToPlay = toPlay.opposite();
       return GoGameState(
         boardSize: boardSize,
         board: _copyBoard(board),
-        toPlay: toPlay.opposite(),
+        toPlay: nextToPlay,
         moves: <GoMove>[...moves, move],
-        previousBoardHash: boardHash(board),
+        previousBoardHash: passHash,
         consecutivePasses: consecutivePasses + 1,
         blackCaptures: blackCaptures,
         whiteCaptures: whiteCaptures,
+        positionHistory: <String>[...positionHistory, passHash],
+        situationalHistory: <String>[
+          ...situationalHistory,
+          _situationalKey(passHash, nextToPlay),
+        ],
       );
     }
 
@@ -84,14 +108,19 @@ class GoGameState {
     }
 
     final String nextHash = boardHash(nextBoard);
-    if (nextHash == previousBoardHash) {
+    final GoStone nextToPlay = toPlay.opposite();
+    if (_violatesKo(
+      nextHash: nextHash,
+      nextToPlay: nextToPlay,
+      koRule: koRule,
+    )) {
       throw StateError('Ko violation');
     }
 
     return GoGameState(
       boardSize: boardSize,
       board: nextBoard,
-      toPlay: toPlay.opposite(),
+      toPlay: nextToPlay,
       moves: <GoMove>[...moves, move],
       previousBoardHash: boardHash(board),
       consecutivePasses: 0,
@@ -101,8 +130,33 @@ class GoGameState {
       whiteCaptures: move.player == GoStone.white
           ? whiteCaptures + capturedStones
           : whiteCaptures,
+      positionHistory: <String>[...positionHistory, nextHash],
+      situationalHistory: <String>[
+        ...situationalHistory,
+        _situationalKey(nextHash, nextToPlay),
+      ],
     );
   }
+
+  bool _violatesKo({
+    required String nextHash,
+    required GoStone nextToPlay,
+    required KoRule koRule,
+  }) {
+    switch (koRule) {
+      case KoRule.simple:
+        return nextHash == previousBoardHash;
+      case KoRule.positionalSuperko:
+        return positionHistory.contains(nextHash);
+      case KoRule.situationalSuperko:
+        return situationalHistory.contains(
+          _situationalKey(nextHash, nextToPlay),
+        );
+    }
+  }
+
+  static String _situationalKey(String boardHash, GoStone toPlay) =>
+      '$boardHash|${toPlay.name}';
 
   GoScore scoreByRules(GameRules rules) {
     return rules.scoringRule == ScoringRule.area
@@ -222,7 +276,9 @@ class GoGameState {
     return sb.toString();
   }
 
-  Iterable<GoPoint> legalMovesForCurrentPlayer() sync* {
+  Iterable<GoPoint> legalMovesForCurrentPlayer({
+    KoRule koRule = KoRule.simple,
+  }) sync* {
     for (int y = 0; y < boardSize; y++) {
       for (int x = 0; x < boardSize; x++) {
         final GoPoint p = GoPoint(x, y);
@@ -230,7 +286,7 @@ class GoGameState {
           continue;
         }
         try {
-          play(GoMove(player: toPlay, point: p));
+          play(GoMove(player: toPlay, point: p), koRule: koRule);
           yield p;
         } catch (_) {
           // illegal

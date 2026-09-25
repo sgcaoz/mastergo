@@ -12,6 +12,12 @@ import CryptoKit
   /// In-process KataGo analysis handle (no subprocess; App Store compliant).
   private var katagoHandle: OpaquePointer?
 
+  private func kgLog(_ message: String) {
+    #if DEBUG
+    print(message)
+    #endif
+  }
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -96,7 +102,15 @@ import CryptoKit
       }
     }
     do {
-      let content = try String(contentsOf: url, encoding: .utf8)
+      let data = try Data(contentsOf: url)
+      if data.count > 2 * 1024 * 1024 {
+        result(nil)
+        return
+      }
+      guard let content = String(data: data, encoding: .utf8) else {
+        result(nil)
+        return
+      }
       result(["content": content, "fileName": fileName])
     } catch {
       result(FlutterError(
@@ -132,15 +146,15 @@ import CryptoKit
       let args = call.arguments as? [String: Any],
       let modelAssetPath = args["modelAssetPath"] as? String
     else {
-      print("[KataGo] prepareModel bad args: need modelAssetPath")
+      kgLog("[KataGo] prepareModel bad args: need modelAssetPath")
       result(FlutterError(code: "BAD_ARGS", message: "modelAssetPath is required", details: nil))
       return
     }
-    print("[KataGo] prepareModel asset=\(modelAssetPath)")
+    kgLog("[KataGo] prepareModel asset=\(modelAssetPath)")
 
     let expectedSha = (args["modelSha256"] as? String)?.lowercased()
     guard let assetFilePath = pathForFlutterAsset(assetPath: modelAssetPath) else {
-      print("[KataGo] prepareModel asset not found: \(modelAssetPath)")
+      kgLog("[KataGo] prepareModel asset not found: \(modelAssetPath)")
       result(
         FlutterError(
           code: "MODEL_ASSET_NOT_FOUND",
@@ -156,11 +170,25 @@ import CryptoKit
       let fileName = URL(fileURLWithPath: modelAssetPath).lastPathComponent
       let targetFile = targetDir.appendingPathComponent(fileName)
 
-      try copyFileIfNeeded(from: URL(fileURLWithPath: assetFilePath), to: targetFile)
+      let sourceURL = URL(fileURLWithPath: assetFilePath)
+      if FileManager.default.fileExists(atPath: targetFile.path) {
+        let existingSha = try sha256Hex(of: targetFile)
+        if expectedSha == nil || expectedSha == existingSha.lowercased() {
+          kgLog("[KataGo] prepareModel ok cached path=\(targetFile.path)")
+          result([
+            "modelPath": targetFile.path,
+            "sha256": existingSha,
+          ])
+          return
+        }
+        kgLog("[KataGo] prepareModel replacing stale model hash=\(existingSha)")
+        try FileManager.default.removeItem(at: targetFile)
+      }
+      try FileManager.default.copyItem(at: sourceURL, to: targetFile)
       let actualSha = try sha256Hex(of: targetFile)
 
       if let expectedSha = expectedSha, expectedSha != actualSha.lowercased() {
-        print("[KataGo] prepareModel sha256 mismatch")
+        kgLog("[KataGo] prepareModel sha256 mismatch")
         result(
           FlutterError(
             code: "MODEL_HASH_MISMATCH",
@@ -171,13 +199,13 @@ import CryptoKit
         return
       }
 
-      print("[KataGo] prepareModel ok path=\(targetFile.path)")
+      kgLog("[KataGo] prepareModel ok path=\(targetFile.path)")
       result([
         "modelPath": targetFile.path,
         "sha256": actualSha,
       ])
     } catch {
-      print("[KataGo] prepareModel error: \(error.localizedDescription)")
+      kgLog("[KataGo] prepareModel error: \(error.localizedDescription)")
       result(FlutterError(code: "PREPARE_MODEL_FAILED", message: error.localizedDescription, details: nil))
     }
   }
@@ -188,13 +216,13 @@ import CryptoKit
       let modelPath = args["modelPath"] as? String,
       let configAssetPath = args["configAssetPath"] as? String
     else {
-      print("[KataGo] startEngine bad args: need modelPath and configAssetPath")
+      kgLog("[KataGo] startEngine bad args: need modelPath and configAssetPath")
       result(FlutterError(code: "BAD_ARGS", message: "modelPath and configAssetPath are required", details: nil))
       return
     }
     do {
       if katagoHandle != nil {
-        print("[KataGo] startEngine destroying previous handle")
+        kgLog("[KataGo] startEngine destroying previous handle")
         kg_analysis_destroy(katagoHandle)
         katagoHandle = nil
       }
@@ -205,25 +233,25 @@ import CryptoKit
       let configPath = configFile.path
       let fm = FileManager.default
       guard fm.fileExists(atPath: configPath) else {
-        print("[KataGo] startEngine config file missing: \(configPath)")
+        kgLog("[KataGo] startEngine config file missing: \(configPath)")
         iosEngineStarted = false
         result(FlutterError(code: "START_ENGINE_FAILED", message: "Config file not found: \(configPath)", details: nil))
         return
       }
       guard fm.fileExists(atPath: modelPath) else {
-        print("[KataGo] startEngine model file missing: \(modelPath)")
+        kgLog("[KataGo] startEngine model file missing: \(modelPath)")
         iosEngineStarted = false
         result(FlutterError(code: "START_ENGINE_FAILED", message: "Model file not found: \(modelPath)", details: nil))
         return
       }
-      print("[KataGo] startEngine config=\(configPath) model=\(modelPath) (files exist)")
+      kgLog("[KataGo] startEngine config=\(configPath) model=\(modelPath) (files exist)")
       let h: OpaquePointer? = configPath.withCString { cConfig in
         modelPath.withCString { cModel in
           kg_analysis_create(cConfig, cModel)
         }
       }
       guard let handle = h else {
-        print("[KataGo] startEngine failed: kg_analysis_create returned nil (config/model paths ok)")
+        kgLog("[KataGo] startEngine failed: kg_analysis_create returned nil (config/model paths ok)")
         iosEngineStarted = false
         result(
           FlutterError(
@@ -240,7 +268,7 @@ import CryptoKit
       let probeData = try JSONSerialization.data(withJSONObject: probeReq)
       guard let probeJson = String(data: probeData, encoding: .utf8) else {
         kg_analysis_destroy(handle)
-        print("[KataGo] startEngine probe JSON encode failed")
+        kgLog("[KataGo] startEngine probe JSON encode failed")
         iosEngineStarted = false
         katagoHandle = nil
         result(FlutterError(code: "START_ENGINE_FAILED", message: "Probe JSON encoding failed", details: nil))
@@ -251,7 +279,7 @@ import CryptoKit
       }
       guard let probeCStr = probeCStr else {
         kg_analysis_destroy(handle)
-        print("[KataGo] startEngine probe failed: query_models returned nil")
+        kgLog("[KataGo] startEngine probe failed: query_models returned nil")
         iosEngineStarted = false
         katagoHandle = nil
         result(FlutterError(code: "START_ENGINE_FAILED", message: "Engine probe failed (query_models nil)", details: nil))
@@ -264,7 +292,7 @@ import CryptoKit
         let probeResp = try JSONSerialization.jsonObject(with: probeRespData) as? [String: Any]
       else {
         kg_analysis_destroy(handle)
-        print("[KataGo] startEngine probe failed: invalid JSON")
+        kgLog("[KataGo] startEngine probe failed: invalid JSON")
         iosEngineStarted = false
         katagoHandle = nil
         result(FlutterError(code: "START_ENGINE_FAILED", message: "Engine probe invalid JSON", details: nil))
@@ -274,7 +302,7 @@ import CryptoKit
       if models.isEmpty {
         kg_analysis_destroy(handle)
         let keys = probeResp.keys.joined(separator: ",")
-        print("[KataGo] startEngine probe failed: models empty keys=\(keys) probe=\(probeStr)")
+        kgLog("[KataGo] startEngine probe failed: models empty keys=\(keys) probe=\(probeStr)")
         iosEngineStarted = false
         katagoHandle = nil
         result(FlutterError(code: "START_ENGINE_FAILED", message: "Engine probe models empty", details: probeResp))
@@ -282,13 +310,13 @@ import CryptoKit
       }
 
       let modelNames = models.compactMap { $0["name"] as? String }.joined(separator: ",")
-      print("[KataGo] startEngine probe ok models=\(models.count) names=\(modelNames)")
+      kgLog("[KataGo] startEngine probe ok models=\(models.count) names=\(modelNames)")
       katagoHandle = handle
       iosEngineStarted = true
-      print("[KataGo] startEngine ok")
+      kgLog("[KataGo] startEngine ok")
       result(["started": true, "modelsLoaded": models.count])
     } catch {
-      print("[KataGo] startEngine error: \(error.localizedDescription)")
+      kgLog("[KataGo] startEngine error: \(error.localizedDescription)")
       iosEngineStarted = false
       katagoHandle = nil
       result(
@@ -303,7 +331,7 @@ import CryptoKit
 
   private func analyzeOnce(call: FlutterMethodCall, result: @escaping FlutterResult) {
     guard iosEngineStarted, let handle = katagoHandle else {
-      print("[KataGo] analyzeOnce rejected: engine not running")
+      kgLog("[KataGo] analyzeOnce rejected: engine not running")
       result(
         FlutterError(
           code: "ENGINE_NOT_RUNNING",
@@ -315,7 +343,7 @@ import CryptoKit
     }
 
     guard let args = call.arguments as? [String: Any] else {
-      print("[KataGo] analyzeOnce bad args: nil")
+      kgLog("[KataGo] analyzeOnce bad args: nil")
       result(FlutterError(code: "BAD_ARGS", message: "analyzeOnce args are required", details: nil))
       return
     }
@@ -332,19 +360,19 @@ import CryptoKit
     let includeOwnership = (args["includeOwnership"] as? Bool) ?? false
 
     if boardSize < 2 || boardSize > 25 {
-      print("[KataGo] analyzeOnce id=\(queryId) invalid boardSize=\(boardSize) (must be 2..25)")
+      kgLog("[KataGo] analyzeOnce id=\(queryId) invalid boardSize=\(boardSize) (must be 2..25)")
       result(FlutterError(code: "BAD_ARGS", message: "boardSize must be 2..25, got \(boardSize)", details: nil))
       return
     }
 
     let parsedMoves = parseTokenArray(tokens: moves)
     if moves.count > 0 && parsedMoves.count == 0 {
-      print("[KataGo] analyzeOnce id=\(queryId) moves format invalid: got \(moves.count) tokens but 0 parsed (expect 'B:Q16' style). first=\(moves.first ?? "")")
+      kgLog("[KataGo] analyzeOnce id=\(queryId) moves format invalid: got \(moves.count) tokens but 0 parsed (expect 'B:Q16' style). first=\(moves.first ?? "")")
       result(FlutterError(code: "BAD_ARGS", message: "moves must be 'B:Q16' / 'W:D4' style pairs, got \(moves.count) unparseable", details: nil))
       return
     }
 
-    print("[KataGo] analyzeOnce id=\(queryId) board=\(boardSize) moves=\(moves.count)->\(parsedMoves.count) initialStones=\(initialStones.count) initialPlayer=\(initialPlayer) rules=\(ruleset) maxVisits=\(maxVisits) maxTime=\(Double(thinkingTimeMs)/1000)s")
+    kgLog("[KataGo] analyzeOnce id=\(queryId) board=\(boardSize) moves=\(moves.count)->\(parsedMoves.count) initialStones=\(initialStones.count) initialPlayer=\(initialPlayer) rules=\(ruleset) maxVisits=\(maxVisits) maxTime=\(Double(thinkingTimeMs)/1000)s")
 
     var payload: [String: Any] = [
       "id": queryId,
@@ -361,11 +389,30 @@ import CryptoKit
     // Use overrideSettings so time budget still applies without triggering unused-field warnings.
     payload["overrideSettings"] = ["maxTime": Double(thinkingTimeMs) / 1000.0]
     payload["includeOwnership"] = includeOwnership
+    if let turnsAny = args["analyzeTurns"] as? [Any] {
+      let turns = turnsAny.compactMap { ($0 as? NSNumber)?.intValue ?? ($0 as? Int) }
+      if !turns.isEmpty {
+        payload["analyzeTurns"] = turns
+      }
+    }
+    if let allowAny = args["allowMoves"] as? [Any] {
+      let allow = allowAny.compactMap { item -> [String: Any]? in
+        guard let map = item as? [String: Any] else { return nil }
+        let player = map["player"] as? String ?? "B"
+        let depth = (map["untilDepth"] as? NSNumber)?.intValue ?? (map["untilDepth"] as? Int) ?? 20
+        let moves = (map["moves"] as? [Any])?.compactMap { $0 as? String } ?? []
+        if moves.isEmpty { return nil }
+        return ["player": player, "untilDepth": depth, "moves": moves]
+      }
+      if !allow.isEmpty {
+        payload["allowMoves"] = allow
+      }
+    }
 
     if let arr = payload["moves"] as? [[String]], !arr.isEmpty {
       let head = arr.prefix(2).map { "[\($0.joined(separator: ","))]" }.joined(separator: " ")
       let tail = arr.count > 2 ? " …(\(arr.count) total)" : ""
-      print("[KataGo] analyzeOnce id=\(queryId) payload.moves sample: \(head)\(tail)")
+      kgLog("[KataGo] analyzeOnce id=\(queryId) payload.moves sample: \(head)\(tail)")
     }
 
     do {
@@ -378,23 +425,31 @@ import CryptoKit
         kg_analysis_analyze(handle, cReq)
       }
       guard let responseCStr = responseCStr else {
-        print("[KataGo] analyzeOnce id=\(queryId) engine returned nil (timeout or done)")
+        kgLog("[KataGo] analyzeOnce id=\(queryId) engine returned nil (timeout or done)")
         result(FlutterError(code: "ANALYZE_FAILED", message: "Engine returned no response", details: nil))
         return
       }
       defer { kg_analysis_free_string(responseCStr) }
       let responseStr = String(cString: responseCStr)
+      let objects = parseKatagoJsonObjects(responseStr)
+      if objects.count > 1 {
+        let maps = objects.compactMap { analyzeResultMap(queryId: queryId, response: $0, responseStr: responseStr) }
+        if maps.count > 1 {
+          result(["queryId": queryId, "results": maps] as [String: Any])
+          return
+        }
+      }
       guard
         let responseData = responseStr.data(using: .utf8),
         let response = try JSONSerialization.jsonObject(with: responseData) as? [String: Any]
       else {
-        print("[KataGo] analyzeOnce id=\(queryId) invalid JSON from engine")
+        kgLog("[KataGo] analyzeOnce id=\(queryId) invalid JSON from engine")
         result(FlutterError(code: "ANALYZE_FAILED", message: "Invalid JSON from engine", details: nil))
         return
       }
 
       if let errorMsg = response["error"] as? String {
-        print("[KataGo] analyzeOnce id=\(queryId) error=\(errorMsg)")
+        kgLog("[KataGo] analyzeOnce id=\(queryId) error=\(errorMsg)")
         result(
           FlutterError(
             code: "ENGINE_RESPONSE_ERROR",
@@ -406,7 +461,7 @@ import CryptoKit
       }
 
       if (response["noResults"] as? NSNumber)?.boolValue == true {
-        print("[KataGo] analyzeOnce id=\(queryId) noResults=true")
+        kgLog("[KataGo] analyzeOnce id=\(queryId) noResults=true")
         result(
           FlutterError(
             code: "ENGINE_NO_RESULTS",
@@ -423,7 +478,7 @@ import CryptoKit
       if rootInfo == nil || moveInfos == nil {
         let keys = response.keys.joined(separator: ",")
         let snippet = responseStr.count > 800 ? String(responseStr.prefix(800)) + "…" : responseStr
-        print("[KataGo] analyzeOnce id=\(queryId) unexpected response shape id=\(responseId ?? "nil") keys=\(keys) snippet=\(snippet)")
+        kgLog("[KataGo] analyzeOnce id=\(queryId) unexpected response shape id=\(responseId ?? "nil") keys=\(keys) snippet=\(snippet)")
         result(
           FlutterError(
             code: "ENGINE_UNEXPECTED_RESPONSE",
@@ -437,15 +492,15 @@ import CryptoKit
       let winrate = (rootInfo?["winrate"] as? NSNumber)?.doubleValue ?? 0.5
       let scoreLead = (rootInfo?["scoreLead"] as? NSNumber)?.doubleValue ?? 0.0
       let bestMove = (moveInfos?.first?["move"] as? String) ?? "pass"
-      print("[KataGo] analyzeOnce id=\(queryId) bestMove=\(bestMove) winrate=\(String(format: "%.3f", winrate)) scoreLead=\(String(format: "%.1f", scoreLead)) moveInfos=\(moveInfosCount)) rootInfo=\(rootInfo != nil)")
+      kgLog("[KataGo] analyzeOnce id=\(queryId) bestMove=\(bestMove) winrate=\(String(format: "%.3f", winrate)) scoreLead=\(String(format: "%.1f", scoreLead)) moveInfos=\(moveInfosCount)) rootInfo=\(rootInfo != nil)")
 
       if moveInfosCount == 0 {
         let respKeys = response.keys.joined(separator: ",")
         let snippet = responseStr.count > 600 ? String(responseStr.prefix(600)) + "…" : responseStr
-        print("[KataGo] analyzeOnce WARNING moveInfos empty! responseKeys=\(respKeys) snippet=\(snippet)")
+        kgLog("[KataGo] analyzeOnce WARNING moveInfos empty! responseKeys=\(respKeys) snippet=\(snippet)")
       } else if bestMove == "pass" && moveInfosCount > 0 {
         let first = moveInfos?.first ?? [:]
-        print("[KataGo] analyzeOnce first moveInfo keys=\(first.keys.joined(separator: ",")) move=\(first["move"] ?? "nil")")
+        kgLog("[KataGo] analyzeOnce first moveInfo keys=\(first.keys.joined(separator: ",")) move=\(first["move"] ?? "nil")")
       }
 
       var resultMap: [String: Any] = [
@@ -465,13 +520,13 @@ import CryptoKit
       resultMap["_debugMoveInfosPresent"] = (moveInfos != nil)
       result(resultMap)
     } catch {
-      print("[KataGo] analyzeOnce id=\(queryId) throw: \(error.localizedDescription)")
+      kgLog("[KataGo] analyzeOnce id=\(queryId) throw: \(error.localizedDescription)")
       result(FlutterError(code: "ANALYZE_FAILED", message: error.localizedDescription, details: nil))
     }
   }
 
   private func shutdownEngine(result: @escaping FlutterResult) {
-    print("[KataGo] shutdownEngine")
+    kgLog("[KataGo] shutdownEngine")
     if let h = katagoHandle {
       kg_analysis_destroy(h)
       katagoHandle = nil
@@ -564,6 +619,57 @@ import CryptoKit
       }
     }
     return pairs
+  }
+
+  private func parseKatagoJsonObjects(_ raw: String) -> [[String: Any]] {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty {
+      return []
+    }
+    if let data = trimmed.data(using: .utf8),
+       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+      return [obj]
+    }
+    var objects: [[String: Any]] = []
+    for line in trimmed.split(whereSeparator: \.isNewline) {
+      let piece = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
+      guard piece.hasPrefix("{"),
+            let data = piece.data(using: .utf8),
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        continue
+      }
+      objects.append(obj)
+    }
+    return objects
+  }
+
+  private func analyzeResultMap(
+    queryId: String,
+    response: [String: Any],
+    responseStr: String
+  ) -> [String: Any]? {
+    if response["error"] is String {
+      return nil
+    }
+    guard let rootInfo = response["rootInfo"] as? [String: Any] else {
+      return nil
+    }
+    let moveInfos = response["moveInfos"] as? [[String: Any]] ?? []
+    let winrate = (rootInfo["winrate"] as? NSNumber)?.doubleValue ?? 0.5
+    let scoreLead = (rootInfo["scoreLead"] as? NSNumber)?.doubleValue ?? 0.0
+    let bestMove = (moveInfos.first?["move"] as? String) ?? "pass"
+    var resultMap: [String: Any] = [
+      "queryId": queryId,
+      "bestMove": bestMove,
+      "winrate": winrate,
+      "scoreLead": scoreLead,
+      "turnNumber": (response["turnNumber"] as? NSNumber)?.intValue ?? 0,
+      "rawResponse": response,
+    ]
+    if let ownershipAny = response["ownership"] as? [Any] {
+      resultMap["ownership"] = ownershipAny.compactMap { ($0 as? NSNumber)?.doubleValue }
+    }
+    return resultMap
   }
 
   private func currentTimeMs() -> Int64 {

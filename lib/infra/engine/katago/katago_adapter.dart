@@ -1,12 +1,30 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:mastergo/domain/entities/analysis_profile.dart';
 import 'package:mastergo/domain/entities/game_rules.dart';
 import 'package:mastergo/domain/entities/game_setup.dart';
 import 'package:mastergo/domain/entities/katago_model.dart';
 import 'package:mastergo/infra/config/katago_model_repository.dart';
-import 'package:flutter/services.dart';
+import 'package:mastergo/infra/debug_log.dart';
+
+/// Who moves first in the KataGo query. With no moves yet, that is the side to play
+/// (white in a handicap game). Once moves exist, it is the color of the first move.
+String katagoInitialPlayer({
+  required bool blackToMove,
+  required List<String> moves,
+}) {
+  if (moves.isNotEmpty) {
+    final int split = moves.first.indexOf(':');
+    if (split > 0) {
+      final String color = moves.first.substring(0, split);
+      if (color == 'B' || color == 'W') {
+        return color;
+      }
+    }
+  }
+  return blackToMove ? 'B' : 'W';
+}
 
 class KatagoAnalyzeRequest {
   const KatagoAnalyzeRequest({
@@ -19,6 +37,7 @@ class KatagoAnalyzeRequest {
     this.analyzeTurns = const <int>[],
     this.timeoutMs,
     this.includeOwnership = false,
+    this.allowMoves = const <Map<String, Object>>[],
   });
 
   final String queryId;
@@ -29,8 +48,12 @@ class KatagoAnalyzeRequest {
   final List<String> initialStones;
   final List<int> analyzeTurns;
   final int? timeoutMs;
+
   /// When true, engine returns per-point ownership (-1 black to 1 white) for territory display.
   final bool includeOwnership;
+
+  /// KataGo `allowMoves` entries: player, untilDepth, moves (GTP).
+  final List<Map<String, Object>> allowMoves;
 }
 
 class KatagoAnalyzeResult {
@@ -39,6 +62,7 @@ class KatagoAnalyzeResult {
     required this.winrate,
     required this.scoreLead,
     required this.bestMove,
+    this.turnNumber,
     this.topCandidates = const <KatagoMoveCandidate>[],
     this.topMoves = const <String>[],
     this.ownership,
@@ -48,8 +72,12 @@ class KatagoAnalyzeResult {
   final double winrate;
   final double scoreLead;
   final String bestMove;
+
+  /// Present when the engine analyzed a specific turn of a sequence query.
+  final int? turnNumber;
   final List<KatagoMoveCandidate> topCandidates;
   final List<String> topMoves;
+
   /// Per-point ownership from KataGo in this project runtime: row-major, 1 = black territory, -1 = white. Length boardSize².
   final List<double>? ownership;
 }
@@ -71,6 +99,7 @@ class KatagoPreparationStatus {
 
   final bool ready;
   final bool downloading;
+
   /// 0..1 when progress is known.
   final double? progress;
   final String? message;
@@ -82,7 +111,45 @@ abstract class KatagoAdapter {
     bool requestDownload = false,
   });
   Future<KatagoAnalyzeResult> analyze(KatagoAnalyzeRequest request);
+
+  /// Analyze several positions of the same game in one engine query when
+  /// [KatagoAnalyzeRequest.analyzeTurns] is non-empty. Implementations may
+  /// fall back to one query per turn.
+  Future<List<KatagoAnalyzeResult>> analyzeSequence(
+    KatagoAnalyzeRequest request,
+  ) {
+    return analyzeTurnsSequentially(this, request);
+  }
+
   Future<void> shutdown();
+}
+
+Future<List<KatagoAnalyzeResult>> analyzeTurnsSequentially(
+  KatagoAdapter adapter,
+  KatagoAnalyzeRequest request,
+) async {
+  if (request.analyzeTurns.isEmpty) {
+    return <KatagoAnalyzeResult>[await adapter.analyze(request)];
+  }
+  final List<KatagoAnalyzeResult> results = <KatagoAnalyzeResult>[];
+  for (final int turn in request.analyzeTurns) {
+    results.add(
+      await adapter.analyze(
+        KatagoAnalyzeRequest(
+          queryId: '${request.queryId}-t$turn',
+          moves: request.moves.take(turn).toList(),
+          gameSetup: request.gameSetup,
+          rules: request.rules,
+          profile: request.profile,
+          initialStones: request.initialStones,
+          timeoutMs: request.timeoutMs,
+          includeOwnership: request.includeOwnership,
+          allowMoves: request.allowMoves,
+        ),
+      ),
+    );
+  }
+  return results;
 }
 
 class PlatformKatagoAdapter implements KatagoAdapter {
@@ -104,12 +171,12 @@ class PlatformKatagoAdapter implements KatagoAdapter {
   @override
   Future<void> ensureStarted() async {
     if (_started) {
-      debugPrint('[MasterGo/KatagoAdapter] ensureStarted skipped: already started');
+      appLog('[MasterGo/KatagoAdapter] ensureStarted skipped: already started');
       return;
     }
 
     final KatagoModel model = await _modelRepository.loadDefaultModel();
-    debugPrint(
+    appLog(
       '[MasterGo/KatagoAdapter] ensureStarted begin model=${model.id} asset=${model.assetPath}',
     );
     // Model is bundled in app assets (single package); no on-demand pack download.
@@ -124,7 +191,7 @@ class PlatformKatagoAdapter implements KatagoAdapter {
 
     final String preparedModelPath =
         prepareResult['modelPath'] as String? ?? model.assetPath;
-    debugPrint('[MasterGo/KatagoAdapter] prepareModel path=$preparedModelPath');
+    appLog('[MasterGo/KatagoAdapter] prepareModel path=$preparedModelPath');
 
     try {
       await _channel.invokeMethod<void>('startEngine', <String, Object?>{
@@ -132,7 +199,7 @@ class PlatformKatagoAdapter implements KatagoAdapter {
         'configAssetPath': 'assets/config/katago_analysis.cfg',
       });
     } on PlatformException catch (e) {
-      debugPrint(
+      appLog(
         '[MasterGo/KatagoAdapter] startEngine PlatformException '
         'code=${e.code} message=${e.message} details=${e.details}',
       );
@@ -150,35 +217,11 @@ class PlatformKatagoAdapter implements KatagoAdapter {
       }
       rethrow;
     }
-    debugPrint('[MasterGo/KatagoAdapter] startEngine returned success');
+    appLog('[MasterGo/KatagoAdapter] startEngine returned success');
 
     _activeModel = model;
     _started = true;
-    // Warmup is best-effort: it should not block engine availability.
-    try {
-      await _channel
-          .invokeMapMethod<dynamic, dynamic>('analyzeOnce', <String, Object?>{
-            'queryId': 'warmup-${DateTime.now().millisecondsSinceEpoch}',
-            'boardSize': 9,
-            'ruleset': 'chinese',
-            'komi': 7.5,
-            'maxVisits': 20,
-            'thinkingTimeMs': 200,
-            'moves': const <String>[],
-            'initialStones': const <String>[],
-            'modelId': model.id,
-            'timeoutMs': 30000,
-          });
-      debugPrint('[MasterGo/KatagoAdapter] warmup analyzeOnce completed');
-    } on PlatformException catch (e) {
-      debugPrint(
-        '[MasterGo/KatagoAdapter] warmup skipped '
-        'code=${e.code} message=${e.message}',
-      );
-    } catch (e) {
-      debugPrint('[MasterGo/KatagoAdapter] warmup skipped error: $e');
-    }
-    debugPrint('[MasterGo/KatagoAdapter] ensureStarted completed');
+    appLog('[MasterGo/KatagoAdapter] ensureStarted completed');
   }
 
   @override
@@ -198,12 +241,12 @@ class PlatformKatagoAdapter implements KatagoAdapter {
       return await _analyzeOnce(request);
     } catch (e) {
       if (e is PlatformException) {
-        debugPrint(
+        appLog(
           '[MasterGo/KatagoAdapter] analyze PlatformException '
           'code=${e.code} message=${e.message} details=${e.details}',
         );
       } else {
-        debugPrint('[MasterGo/KatagoAdapter] analyze error: $e');
+        appLog('[MasterGo/KatagoAdapter] analyze error: $e');
       }
       if (e is PlatformException && e.code == 'ENGINE_TIMEOUT') {
         rethrow;
@@ -219,7 +262,7 @@ class PlatformKatagoAdapter implements KatagoAdapter {
       }
       if (!_shouldAutoRestart(e)) {
         if (e is PlatformException) {
-          debugPrint(
+          appLog(
             '[MasterGo/KatagoAdapter] auto-restart suppressed '
             'code=${e.code} burst=$_autoRestartBurst',
           );
@@ -266,58 +309,132 @@ class PlatformKatagoAdapter implements KatagoAdapter {
 
   Future<KatagoAnalyzeResult> _analyzeOnce(KatagoAnalyzeRequest request) async {
     await ensureStarted();
-    final String initialPlayer = request.gameSetup.startingPlayer == StoneColor.black ? 'B' : 'W';
+    final String initialPlayer = katagoInitialPlayer(
+      blackToMove: request.gameSetup.startingPlayer == StoneColor.black,
+      moves: request.moves,
+    );
     final int boardSize = request.gameSetup.boardSize.clamp(2, 25);
     if (request.gameSetup.boardSize != boardSize) {
-      debugPrint(
+      appLog(
         '[MasterGo/KatagoAdapter] analyzeOnce boardSize clamped '
         '${request.gameSetup.boardSize} -> $boardSize',
       );
     }
-    debugPrint(
+    appLog(
       '[MasterGo/KatagoAdapter] analyzeOnce req queryId=${request.queryId} '
       'board=$boardSize moves=${request.moves.length} '
       'initialStones=${request.initialStones.length} maxVisits=${request.profile.maxVisits} '
       'thinkingMs=${request.profile.thinkingTimeMs}',
     );
     final Map<dynamic, dynamic>? response = await _channel
-        .invokeMapMethod<dynamic, dynamic>('analyzeOnce', <String, Object?>{
-          'queryId': request.queryId,
-          'boardSize': boardSize,
-          'initialPlayer': initialPlayer,
-          'ruleset': request.rules.ruleset,
-          'komi': request.rules.komi,
-          'maxVisits': request.profile.maxVisits,
-          'thinkingTimeMs': request.profile.thinkingTimeMs,
-          'moves': request.moves,
-          'initialStones': request.initialStones,
-          'modelId': _activeModel?.id,
-          'timeoutMs': request.timeoutMs,
-          'includeOwnership': request.includeOwnership,
-        });
+        .invokeMapMethod<dynamic, dynamic>(
+          'analyzeOnce',
+          _analyzePayload(
+            request,
+            boardSize: boardSize,
+            initialPlayer: initialPlayer,
+          ),
+        );
     if (response == null) {
-      debugPrint('[MasterGo/KatagoAdapter] analyzeOnce response is null');
+      appLog('[MasterGo/KatagoAdapter] analyzeOnce response is null');
       throw StateError('KataGo analyzeOnce returned null');
     }
 
     final String bestMove = response['bestMove'] as String? ?? 'pass';
     final double winrate = (response['winrate'] as num?)?.toDouble() ?? 0.5;
     final double scoreLead = (response['scoreLead'] as num?)?.toDouble() ?? 0.0;
-    final int? nativeReceived = (response['_debugNativeMovesReceived'] as num?)?.toInt();
-    final int? nativeParsed = (response['_debugNativeMovesParsed'] as num?)?.toInt();
-    debugPrint(
+    final int? nativeReceived = (response['_debugNativeMovesReceived'] as num?)
+        ?.toInt();
+    final int? nativeParsed = (response['_debugNativeMovesParsed'] as num?)
+        ?.toInt();
+    appLog(
       '[MasterGo/KatagoAdapter] analyzeOnce res queryId=${response['queryId']} '
       'bestMove=$bestMove winrate=${winrate.toStringAsFixed(3)} scoreLead=${scoreLead.toStringAsFixed(1)}'
       '${nativeReceived != null && nativeParsed != null ? " nativeMoves=$nativeReceived->$nativeParsed" : ""}',
     );
+    return _resultFromResponseMap(response);
+  }
 
+  Map<String, Object?> _analyzePayload(
+    KatagoAnalyzeRequest request, {
+    required int boardSize,
+    required String initialPlayer,
+  }) {
+    final Map<String, Object?> payload = <String, Object?>{
+      'queryId': request.queryId,
+      'boardSize': boardSize,
+      'initialPlayer': initialPlayer,
+      'ruleset': kataGoRulesetName(request.rules.ruleset),
+      'komi': request.rules.komi,
+      'maxVisits': request.profile.maxVisits,
+      'thinkingTimeMs': request.profile.thinkingTimeMs,
+      'moves': request.moves,
+      'initialStones': request.initialStones,
+      'modelId': _activeModel?.id,
+      'timeoutMs': request.timeoutMs,
+      'includeOwnership': request.includeOwnership,
+    };
+    if (request.analyzeTurns.isNotEmpty) {
+      payload['analyzeTurns'] = request.analyzeTurns;
+    }
+    if (request.allowMoves.isNotEmpty) {
+      payload['allowMoves'] = request.allowMoves;
+    }
+    return payload;
+  }
+
+  @override
+  Future<List<KatagoAnalyzeResult>> analyzeSequence(
+    KatagoAnalyzeRequest request,
+  ) async {
+    if (request.analyzeTurns.isEmpty) {
+      return <KatagoAnalyzeResult>[await analyze(request)];
+    }
+    await ensureStarted();
+    final String initialPlayer = katagoInitialPlayer(
+      blackToMove: request.gameSetup.startingPlayer == StoneColor.black,
+      moves: request.moves,
+    );
+    final int boardSize = request.gameSetup.boardSize.clamp(2, 25);
+    try {
+      final Map<dynamic, dynamic>? response = await _channel
+          .invokeMapMethod<dynamic, dynamic>(
+            'analyzeOnce',
+            _analyzePayload(
+              request,
+              boardSize: boardSize,
+              initialPlayer: initialPlayer,
+            ),
+          );
+      if (response == null) {
+        throw StateError('KataGo analyzeOnce returned null');
+      }
+      final Object? rawResults = response['results'];
+      if (rawResults is List && rawResults.isNotEmpty) {
+        return rawResults
+            .whereType<Map>()
+            .map(
+              (Map<dynamic, dynamic> item) =>
+                  _resultFromResponseMap(Map<dynamic, dynamic>.from(item)),
+            )
+            .toList();
+      }
+      if (response['winrate'] != null) {
+        return <KatagoAnalyzeResult>[_resultFromResponseMap(response)];
+      }
+    } catch (e) {
+      appLog('[MasterGo/KatagoAdapter] analyzeSequence falling back: $e');
+    }
+    return analyzeTurnsSequentially(this, request);
+  }
+
+  KatagoAnalyzeResult _resultFromResponseMap(Map<dynamic, dynamic> response) {
+    final String bestMove = response['bestMove'] as String? ?? 'pass';
+    final double winrate = (response['winrate'] as num?)?.toDouble() ?? 0.5;
+    final double scoreLead = (response['scoreLead'] as num?)?.toDouble() ?? 0.0;
     final List<KatagoMoveCandidate> topCandidates = _extractTopCandidates(
       response,
     );
-    final List<String> topMoves = topCandidates
-        .map((KatagoMoveCandidate c) => c.move)
-        .toList();
-
     List<double>? ownership;
     final Object? rawOwnership = response['ownership'];
     if (rawOwnership is List) {
@@ -325,14 +442,14 @@ class PlatformKatagoAdapter implements KatagoAdapter {
           .map((dynamic e) => (e is num) ? e.toDouble() : 0.0)
           .toList();
     }
-
     return KatagoAnalyzeResult(
-      queryId: response['queryId'] as String,
-      winrate: (response['winrate'] as num).toDouble(),
-      scoreLead: (response['scoreLead'] as num).toDouble(),
-      bestMove: response['bestMove'] as String,
+      queryId: response['queryId'] as String? ?? '',
+      winrate: winrate,
+      scoreLead: scoreLead,
+      bestMove: bestMove,
+      turnNumber: (response['turnNumber'] as num?)?.toInt(),
       topCandidates: topCandidates,
-      topMoves: topMoves,
+      topMoves: topCandidates.map((KatagoMoveCandidate c) => c.move).toList(),
       ownership: ownership,
     );
   }
@@ -359,7 +476,6 @@ class PlatformKatagoAdapter implements KatagoAdapter {
     if (moveInfos is! List || moveInfos.isEmpty) {
       return const <KatagoMoveCandidate>[];
     }
-    double? bestWinrate;
     final List<KatagoMoveCandidate> candidates = <KatagoMoveCandidate>[];
     for (final dynamic item in moveInfos) {
       if (item is! Map) {
@@ -369,34 +485,21 @@ class PlatformKatagoAdapter implements KatagoAdapter {
       if (move.isEmpty || move.toLowerCase() == 'pass') {
         continue;
       }
+      if (candidates.any((KatagoMoveCandidate c) => c.move == move)) {
+        continue;
+      }
       final double? wr = (item['winrate'] as num?)?.toDouble();
-      if (bestWinrate == null && wr != null) {
-        bestWinrate = wr;
-      }
-      // If multiple moves are effectively tied, expose up to 3 hints.
-      final bool nearBest =
-          bestWinrate == null || wr == null || (bestWinrate - wr).abs() <= 0.01;
-      if (nearBest &&
-          !candidates.any((KatagoMoveCandidate c) => c.move == move)) {
-        candidates.add(
-          KatagoMoveCandidate(move: move, blackWinrate: wr ?? 0.5),
-        );
-      }
-      if (candidates.length >= 3) {
+      candidates.add(KatagoMoveCandidate(move: move, blackWinrate: wr ?? 0.5));
+      if (candidates.length >= 16) {
         break;
       }
     }
-    if (candidates.isEmpty) {
-      return const <KatagoMoveCandidate>[];
-    }
-    return candidates.length > 1
-        ? candidates.take(3).toList()
-        : <KatagoMoveCandidate>[candidates.first];
+    return candidates;
   }
 
   @override
   Future<void> shutdown() async {
-    debugPrint('[MasterGo/KatagoAdapter] shutdown');
+    appLog('[MasterGo/KatagoAdapter] shutdown');
     await _channel.invokeMethod<void>('shutdownEngine');
     _started = false;
   }
@@ -417,7 +520,30 @@ class MockKatagoAdapter implements KatagoAdapter {
       winrate: 0.5,
       scoreLead: 0,
       bestMove: 'D4',
+      turnNumber: request.analyzeTurns.isEmpty
+          ? request.moves.length
+          : request.analyzeTurns.first,
     );
+  }
+
+  @override
+  Future<List<KatagoAnalyzeResult>> analyzeSequence(
+    KatagoAnalyzeRequest request,
+  ) async {
+    if (request.analyzeTurns.isEmpty) {
+      return <KatagoAnalyzeResult>[await analyze(request)];
+    }
+    return request.analyzeTurns
+        .map(
+          (int turn) => KatagoAnalyzeResult(
+            queryId: '${request.queryId}-t$turn',
+            winrate: 0.5,
+            scoreLead: 0,
+            bestMove: 'D4',
+            turnNumber: turn,
+          ),
+        )
+        .toList();
   }
 
   @override

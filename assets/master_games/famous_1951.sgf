@@ -1,0 +1,65 @@
+(;RU[chinese]KM[7.5]SZ[19]DT[1951-10-20]PB[Fujisawa Hosai]BR[9dan]PW[Go Seigen]WR[9dan]TM[13 hours]RE[W+R]US[tasuki]EV[Game 1 of a ten-game match sponsored by the Yomiuri Shinbun.];B[qd];W[dc];B[pq];W[dq];B[od]
+(;W[qn]C[Nowadays the approach at "a" is most common. "b" is not recommended.
+];B[qp];W[qk];B[ce];W[dh];B[co];W[cl];B[dl];W[cm]
+(;B[dm]C[Black 15 should be at "a".
+];W[dn]C[White's hane at 16 puts Black into an inconvenient position.
+];B[ep];W[cn];B[do];W[en];B[eq];W[cd];B[gq]C[Black 23 secures the left corner and prevents the single stone having any
+aji.
+];W[de]C[White 24 is a honte move.
+]
+(;B[qi]C[Black could also play 25 at "a".
+];W[jc]
+(;B[ie]C[Black 27 is a good erasure. To play at "a" is bad.
+];W[mc]C[White avoids playing at A because it would be submissive. 
+]LB[hd:A];B[ld]C[Black 29 is a tesuji.
+]
+(;W[je]C[Similarly, White avoids playing at "a" because it would also be submissive. 
+];B[lc];W[kf]C[White 32 is unusual; it would normally be at A. 
+]LB[if:A];B[dj];W[mf];B[ne];W[fi]C[With the moves of 34 and 36, White is in a good position.
+]LB[mf:34][ne:35];B[fl];W[fm]
+;B[ek];W[hp];B[hq];W[ip];B[iq];W[ck];B[jp];W[jo];B[kp];W[hl];B[hi];W[gj];B[eh]
+;W[ei];B[dg]C[Black 51 and 53 is a forceful attack, but perhaps a little unreasonable.
+White is able to press Black hard. 
+]LB[eh:51][ei:52];W[fh];B[eg];W[fg];B[ee];W[ff];B[ef];W[ch];B[ed];W[dd]
+;B[id];W[jd];B[ec];W[gd];B[ge]C[Black 67 was the sealed move at the end of the second day. 
+];W[fe];B[db];W[cb];B[fb];W[hb];B[bc];W[bd];B[bb]
+;W[da];B[eb];W[cc];B[cf];W[ba];B[ab];W[ad];B[ib]C[Black 83 is a clever move. 
+]
+(;W[ic]C[White could kill Black by playing 84 at "a".. 
+];B[gb];W[ha]C[White tries to kill everything with 84 and 86. 
+]LB[ic:84][gb:85];B[bg];W[bh];B[be];W[ae]C[Both Go Seigen and Fujisawa misread the corner fight after this. 
+]
+(;B[gc]C[Both assumed that if Black 91 was played at "a".. 
+];W[hc];B[ql];W[fd]C[94 moves. White wins by resignation.
+After 94 the fight becomes a proper ko, so of course White ignores any ko
+threat Black makes.
+White used 7 hours 5 minutes.
+Black used 12 hours 47 minutes. 
+])
+(;B[af];W[cg];B[df];W[ea];B[fa];W[gc]C[They assumed that if Black plays 1 here, White would win the semeai after
+6 by one move. After the game, the game recorder, Shiori Itsuzo 4-dan,
+pointed out the extraordinary tesuji that follows. 
+]LB[af:1][cg:2][df:3][ea:4][fa:5][gc:6][qd:1][dc:2][pq:3][dq:4][od:5][qn:6][qp:7][qk:8][ce:9][dh:10][co:11][cl:12][dl:13][cm:14][dm:15][dn:16][ep:17][cn:18][do:19][en:20][eq:21][cd:22][gq:23][de:24][qi:25][jc:26][ie:27][mc:28][ld:29][je:30][lc:31][kf:32][dj:33][mf:34][ne:35][fi:36][fl:37][fm:38][ek:39][hp:40][hq:41][ip:42][iq:43][ck:44][jp:45][jo:46][kp:47][hl:48][hi:49][gj:50][eh:51][ei:52][dg:53][fh:54][eg:55][fg:56][ee:57][ff:58][ef:59][ch:60][ed:61][dd:62][id:63][jd:64][ec:65][gd:66][ge:67][fe:68][db:69][cb:70][fb:71][hb:72][bc:73][bd:74][bb:75][da:76][eb:77][cc:78][cf:79][ba:80][ab:81][ad:82][ib:83][ic:84][gb:85][ha:86][bg:87][bh:88][be:89][ae:90]
+;B[ac];W[aa];B[bb];W[ab];B[bc];W[fd];B[ca];W[da];B[ea]C[Black 7 forces White 8. After 11 and 12, the position is an approach-move
+ko for White. Even if Black had seen the correct sequence, the game would
+not have been lost for White. He would have switched to A and fought on. 
+]LB[ab:10][fd:12][bb:9][bc:11][aa:8][ac:7][ca:13][da:13][da:14][ko:A]
+))
+(;W[gb];B[ic];W[fd];B[jb]C[Black would be satisfied with linking up to the right with the moves to 4.
+]LB[gb:1][ic:2][fd:3][jb:4][qd:1][dc:2][pq:3][dq:4][od:5][qn:6][qp:7][qk:8][ce:9][dh:10][co:11][cl:12][dl:13][cm:14][dm:15][dn:16][ep:17][cn:18][do:19][en:20][eq:21][cd:22][gq:23][de:24][qi:25][jc:26][ie:27][mc:28][ld:29][je:30][lc:31][kf:32][dj:33][mf:34][ne:35][fi:36][fl:37][fm:38][ek:39][hp:40][hq:41][ip:42][iq:43][ck:44][jp:45][jo:46][kp:47][hl:48][hi:49][gj:50][eh:51][ei:52][dg:53][fh:54][eg:55][fg:56][ee:57][ff:58][ef:59][ch:60][ed:61][dd:62][id:63][jd:64][ec:65][gd:66][ge:67][fe:68][db:69][cb:70][fb:71][hb:72][bc:73][bd:74][bb:75][da:76][eb:77][cc:78][cf:79][ba:80][ab:81][ad:82][ib:83]
+))
+(;W[lc];B[ic];W[ib];B[jd];W[kc];B[hc]C[This is the result that Black hopes for.
+]LB[lc:1][ic:2][ib:3][jd:4][kc:5][hc:6][qd:1][dc:2][pq:3][dq:4][od:5][qn:6][qp:7][qk:8][ce:9][dh:10][co:11][cl:12][dl:13][cm:14][dm:15][dn:16][ep:17][cn:18][do:19][en:20][eq:21][cd:22][gq:23][de:24][qi:25][jc:26][ie:27][mc:28][ld:29]
+))
+(;B[lc];W[je]C[Black 1 just prompts White to jump to 2.
+]LB[lc:1][je:2][qd:1][dc:2][pq:3][dq:4][od:5][qn:6][qp:7][qk:8][ce:9][dh:10][co:11][cl:12][dl:13][cm:14][dm:15][dn:16][ep:17][cn:18][do:19][en:20][eq:21][cd:22][gq:23][de:24][qi:25][jc:26]
+))
+(;B[jc]))
+(;B[eo];W[fp];B[dm]C[This would give Black better shape.
+]LB[eo:1][fp:2][dm:3][qd:1][dc:2][pq:3][dq:4][od:5][qn:6][qp:7][qk:8][ce:9][dh:10][co:11][cl:12][dl:13][cm:14]
+))
+(;W[po];B[qo];W[qn];B[qp];W[pm];B[nq];W[qi]LB[po:1][qo:2][qn:3][qp:4][pm:5][nq:6][qi:7][qd:1][dc:2][pq:3][dq:4][od:5]
+)
+(;W[qo];B[qk]C[White would not be so good since Black 2 is a perfect extension and
+pincer.
+]LB[qo:1][qk:2][qd:1][dc:2][pq:3][dq:4][od:5]))

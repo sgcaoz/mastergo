@@ -10,7 +10,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:http/http.dart' as http;
 import 'package:mastergo/app/app_i18n.dart';
 import 'package:mastergo/application/analysis/game_analysis_service.dart'
     show GameAnalysisService, HintKind, MoveHint;
@@ -22,6 +21,7 @@ import 'package:mastergo/domain/entities/game_setup.dart';
 import 'package:mastergo/domain/go/go_game.dart';
 import 'package:mastergo/domain/go/go_types.dart';
 import 'package:mastergo/features/ai_play/ai_play_page.dart';
+import 'package:mastergo/features/ai_play/unfinished_battle.dart';
 import 'package:mastergo/domain/sgf/sgf_parser.dart';
 import 'package:mastergo/domain/sgf/sgf_writer.dart';
 import 'package:mastergo/features/common/ownership_result_sheet.dart';
@@ -29,7 +29,10 @@ import 'package:mastergo/features/common/pending_confirm_timer.dart';
 import 'package:mastergo/features/common/review_board_panel.dart';
 import 'package:mastergo/features/common/winrate_chart.dart';
 import 'package:mastergo/infra/config/ai_profile_repository.dart';
+import 'package:mastergo/infra/debug_log.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
+import 'package:mastergo/infra/engine/katago/katago_engine_scope.dart';
+import 'package:mastergo/infra/sgf/sgf_url_fetcher.dart';
 import 'package:mastergo/infra/sound/stone_sound.dart';
 import 'package:mastergo/infra/storage/game_record_repository.dart';
 
@@ -90,27 +93,17 @@ Future<_PickedSgfFile?> _pickSgfWithDownloadPriority(
   BuildContext context,
 ) async {
   Future<_PickedSgfFile?> pickFromSystem({String? initialDirectory}) async {
-    final FilePickerResult? pick = await FilePicker.platform.pickFiles(
+    final PlatformFile? file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const <String>['sgf'],
-      allowMultiple: false,
       initialDirectory: initialDirectory,
-      withData: true,
     );
-    if (pick == null || pick.files.isEmpty) {
+    if (file == null) {
       return null;
     }
-    final PlatformFile file = pick.files.first;
     final String name = file.name.isNotEmpty ? file.name : 'imported.sgf';
-    final String content;
-    if (file.bytes != null) {
-      content = utf8.decode(file.bytes!, allowMalformed: true);
-    } else if (file.path != null && file.path!.isNotEmpty) {
-      final List<int> bytes = await File(file.path!).readAsBytes();
-      content = utf8.decode(bytes, allowMalformed: true);
-    } else {
-      return null;
-    }
+    final List<int> bytes = await file.readAsBytes();
+    final String content = utf8.decode(bytes, allowMalformed: true);
     if (!_isSgfName(name) && !_looksLikeSgfContent(content)) {
       _showInvalidSgfMessage(context);
       return null;
@@ -129,16 +122,30 @@ Future<_PickedSgfFile?> _pickSgfWithDownloadPriority(
   return pickFromSystem(initialDirectory: initialDir);
 }
 
+/// 只保留文件名，避免链接或棋谱名里的 `../` 写出下载目录。
+String sgfDownloadFileName(String fileName) {
+  final String base = p
+      .basename(fileName.replaceAll('\\', '/'))
+      .replaceAll(RegExp(r'[\u0000-\u001F]'), '')
+      .trim();
+  if (base.isEmpty || base == '.' || base == '..') {
+    return 'imported.sgf';
+  }
+  return base.toLowerCase().endsWith('.sgf') ? base : '$base.sgf';
+}
+
 /// 将 SGF 内容写入设备下载目录（与 URL 导入一致，便于在文件管理器中看到）。失败不抛错。
 Future<void> saveSgfToDownloadDirectory(String content, String fileName) async {
   try {
     final String? dir = await getInitialDirectoryForImport();
     if (dir == null || dir.isEmpty) return;
-    final String safeName = fileName.toLowerCase().endsWith('.sgf')
-        ? fileName
-        : '$fileName.sgf';
-    final File file = File(p.join(dir, safeName));
-    await file.writeAsString(content);
+    final String safeName = sgfDownloadFileName(fileName);
+    final String root = p.normalize(dir);
+    final String target = p.normalize(p.join(root, safeName));
+    if (!p.isWithin(root, target)) {
+      return;
+    }
+    await File(target).writeAsString(content);
   } catch (_) {}
 }
 
@@ -149,6 +156,9 @@ class RecordReviewPage extends StatefulWidget {
     this.initialTitle,
     this.initialRecordId,
     this.initialSource,
+    this.initialWinrateJson,
+    this.initialRuleset,
+    this.initialKomi,
     this.openWithSgfContent,
     this.openWithSgfFileName,
     this.onOpenWithSgfConsumed,
@@ -158,6 +168,11 @@ class RecordReviewPage extends StatefulWidget {
   final String? initialTitle;
   final String? initialRecordId;
   final String? initialSource;
+  final String? initialWinrateJson;
+
+  /// 名局库里的规则和贴目。棋谱文件没写 KM 时不能退回 7.5。
+  final String? initialRuleset;
+  final double? initialKomi;
 
   /// 由「用本应用打开」传入的 SGF 内容，以导入棋谱方式处理
   final String? openWithSgfContent;
@@ -168,7 +183,7 @@ class RecordReviewPage extends StatefulWidget {
   State<RecordReviewPage> createState() => _RecordReviewPageState();
 }
 
-/// 配置未加载时的复盘分析兜底（与 ai_profiles 挑战档一致，思考 20s 避免 iOS 超时）。
+/// 配置未加载时的复盘分析兜底，与 ai_profiles 挑战档一致。
 const AnalysisProfile _fallbackReviewProfile = AnalysisProfile(
   id: 'review-fallback',
   name: '挑战',
@@ -180,8 +195,9 @@ const AnalysisProfile _fallbackReviewProfile = AnalysisProfile(
 
 class _RecordReviewPageState extends State<RecordReviewPage> {
   final SgfParser _sgfParser = const SgfParser();
-  final KatagoAdapter _katagoAdapter = PlatformKatagoAdapter();
+  final SgfUrlFetcher _sgfUrlFetcher = SgfUrlFetcher();
   final GameAnalysisService _analysisService = const GameAnalysisService();
+  KatagoAdapter get _katagoAdapter => KatagoEngineScope.of(context);
   final GameRecordRepository _recordRepository = GameRecordRepository();
   final AIProfileRepository _profileRepository = AIProfileRepository();
   final TextEditingController _komiController = TextEditingController(
@@ -217,21 +233,33 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   bool _downloading = false;
   bool _reviewTryMode = false;
   GoGameState? _reviewTryState;
+
   /// 试下时双击确认：首次点击仅记录待确认点，再次点击同一点才落子；3 秒无操作自动确认。
   GoPoint? _reviewTryPendingPoint;
-  final PendingConfirmTimer _reviewTryPendingConfirmTimer = PendingConfirmTimer();
+  final PendingConfirmTimer _reviewTryPendingConfirmTimer =
+      PendingConfirmTimer();
   List<GoPoint> _reviewHintPoints = <GoPoint>[];
   bool _reviewHintLoading = false;
   bool _reviewOwnershipLoading = false;
   bool _selectMode = false;
+  String? _masterCategoryFilter;
+  static const List<String> _masterCategoryIds = <String>[
+    'ancient',
+    'international',
+    'classic',
+    'ai',
+  ];
   final Set<String> _selectedIds = <String>{};
   final Map<String, Future<List<GameRecord>>> _sourceFutures =
       <String, Future<List<GameRecord>>>{};
+
   /// 主战线胜率（兼容旧逻辑与续下传入）；实际多分支数据在 [_winratesByBranch]。
   Map<int, double> get _winrates => _winratesByBranch[''] ?? <int, double>{};
+
   /// 各变化图分支胜率：分支 key（见 [_pathToBranchKey]）-> 手数 -> 黑方胜率。
   final Map<String, Map<int, double>> _winratesByBranch =
       <String, Map<int, double>>{};
+
   /// 胜率升降记录：分支 key -> 手数串 -> 文案（如「第5手 -12%」），存 sessionJson，不随用户编辑笔记改变。
   final Map<String, Map<String, String>> _winrateNotes =
       <String, Map<String, String>>{};
@@ -289,6 +317,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         re == '持碁' ||
         re == '무승부') {
       return _t(zh: '和棋', en: 'Draw', ja: '持碁', ko: '무승부');
+    }
+    if (upper == 'VOID' ||
+        upper == 'NO RESULT' ||
+        re == '无胜负' ||
+        re == '無勝負') {
+      return _t(zh: '无胜负', en: 'No result', ja: '無勝負', ko: '승부 없음');
     }
     final RegExp sgfCode = RegExp(
       r'^([BW])\+([0-9]+(?:\.[0-9]+)?|R|RESIGN|T|TIME|F|FORFEIT)$',
@@ -419,8 +453,22 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     await _applyImportedSgf(result.sgf, result.title);
   }
 
+  RecordReviewPage _reviewPageFor(GameRecord record) {
+    return RecordReviewPage(
+      initialSgfContent: record.sgf,
+      initialTitle: record.title,
+      initialRecordId: record.id,
+      initialSource: record.source,
+      initialWinrateJson: record.winrateJson,
+      initialRuleset: record.ruleset,
+      initialKomi: record.komi,
+    );
+  }
+
   Future<void> _openRecord(GameRecord record) async {
-    debugPrint('[复盘] openRecord id=${record.id} source=${record.source} status=${record.status}');
+    appLog(
+      '[复盘] openRecord id=${record.id} source=${record.source} status=${record.status}',
+    );
     if (_selectMode) {
       setState(() {
         if (_selectedIds.contains(record.id)) {
@@ -431,16 +479,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       });
       return;
     }
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => RecordReviewPage(
-          initialSgfContent: record.sgf,
-          initialTitle: record.title,
-          initialRecordId: record.id,
-          initialSource: record.source,
-        ),
-      ),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => _reviewPageFor(record)));
     if (!mounted) return;
     setState(() {
       _sourceFutures
@@ -449,25 +490,33 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     });
   }
 
+  int _recordMoveCount(GameRecord record) {
+    try {
+      final Map<String, dynamic> data =
+          jsonDecode(record.sessionJson) as Map<String, dynamic>;
+      final int sessionMoves =
+          (data['moves'] as List<dynamic>? ?? <dynamic>[]).length;
+      if (sessionMoves > 0) {
+        return sessionMoves;
+      }
+    } catch (_) {}
+    try {
+      return _sgfParser.parse(record.sgf).mainLineNodes().length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   Future<List<GameRecord>> _loadLocalBattleRecords() async {
-    // Data correction: promote legacy temp records once they exceed 20 moves.
+    // 不足 21 手不进本机棋谱。旧的 battle_temp 里够手数的，升到本机对局。
     final List<GameRecord> temp = await _recordRepository.listBySource(
       'battle_temp',
     );
     for (final GameRecord r in temp) {
-      int moves = 0;
-      try {
-        final Map<String, dynamic> data =
-            jsonDecode(r.sessionJson) as Map<String, dynamic>;
-        moves = (data['moves'] as List<dynamic>? ?? <dynamic>[]).length;
-      } catch (_) {
-        try {
-          moves = _sgfParser.parse(r.sgf).mainLineNodes().length;
-        } catch (_) {
-          moves = 0;
-        }
+      if (_recordMoveCount(r) < kMinRecordedBattleMoves) {
+        continue;
       }
-      if (moves >= 20) {
+      try {
         await _recordRepository.upsert(
           GameRecord(
             id: r.id,
@@ -484,15 +533,35 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
             updatedAtMs: r.updatedAtMs,
           ),
         );
-      }
+      } catch (_) {}
     }
-    return _recordRepository.listBySource('battle_local');
+    final List<GameRecord> local = await _recordRepository.listBySource(
+      'battle_local',
+    );
+    final List<GameRecord> merged = <GameRecord>[...local]
+      ..removeWhere(
+        (GameRecord r) => _recordMoveCount(r) < kMinRecordedBattleMoves,
+      )
+      ..sort(
+        (GameRecord a, GameRecord b) => b.updatedAtMs.compareTo(a.updatedAtMs),
+      );
+    return merged;
+  }
+
+  Future<List<GameRecord>> _recordsOrEmpty(
+    Future<List<GameRecord>> Function() load,
+  ) async {
+    try {
+      return await load();
+    } catch (_) {
+      return <GameRecord>[];
+    }
   }
 
   Widget _buildRecordList(String source) {
     final Future<List<GameRecord>> future = source == 'battle_local'
         ? _loadLocalBattleRecords()
-        : (_sourceFutures[source] ??= () async {
+        : (_sourceFutures[source] ??= _recordsOrEmpty(() async {
             if (source != 'download') {
               return _recordRepository.listBySource(source);
             }
@@ -517,12 +586,24 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                     b.updatedAtMs.compareTo(a.updatedAtMs),
               );
             return list;
-          }());
+          }));
     return FutureBuilder<List<GameRecord>>(
       future: future,
       builder: (BuildContext context, AsyncSnapshot<List<GameRecord>> snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(
+              _t(
+                zh: '棋谱加载失败',
+                en: 'Failed to load records',
+                ja: '棋譜の読み込みに失敗しました',
+                ko: '기보를 불러오지 못했습니다',
+              ),
+            ),
+          );
         }
         final List<GameRecord> records = snapshot.data ?? <GameRecord>[];
         if (records.isEmpty) {
@@ -546,7 +627,11 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
             final String pw = _sgfProp(r.sgf, 'PW');
             final String re = _sgfProp(r.sgf, 'RE');
             final String localizedResult = _localizedResultFromRe(re);
-            final int moves = _sgfParser.parse(r.sgf).mainLineNodes().length;
+            final int moves = _recordMoveCount(r);
+            final bool unfinished = r.status != 'finished';
+            final String resultText = unfinished
+                ? _t(zh: '未下完', en: 'Unfinished', ja: '対局中', ko: '미완료')
+                : localizedResult;
             final String title = (pb.isNotEmpty || pw.isNotEmpty)
                 ? '${pb.isEmpty ? 'Black' : pb} vs ${pw.isEmpty ? 'White' : pw}'
                 : r.title;
@@ -554,10 +639,10 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
               title: Text(title),
               subtitle: Text(
                 _t(
-                  zh: '${_fmtTs(r.updatedAtMs)}  ·  手数$moves  ·  $localizedResult',
-                  en: '${_fmtTs(r.updatedAtMs)}  ·  Moves $moves  ·  $localizedResult',
-                  ja: '${_fmtTs(r.updatedAtMs)}  ·  手数$moves  ·  $localizedResult',
-                  ko: '${_fmtTs(r.updatedAtMs)}  ·  수순$moves  ·  $localizedResult',
+                  zh: '${_fmtTs(r.updatedAtMs)}  ·  手数$moves  ·  $resultText',
+                  en: '${_fmtTs(r.updatedAtMs)}  ·  Moves $moves  ·  $resultText',
+                  ja: '${_fmtTs(r.updatedAtMs)}  ·  手数$moves  ·  $resultText',
+                  ko: '${_fmtTs(r.updatedAtMs)}  ·  수순$moves  ·  $resultText',
                 ),
               ),
               leading: _selectMode
@@ -735,7 +820,64 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
 
   /// 名局列表：从数据库按 source=master 列出（seed 库在首次打开时已从 assets 复制）。
   Future<List<GameRecord>> _loadMasterGamesFromDb() async {
-    return _recordRepository.listBySource('master');
+    final List<GameRecord> games = List<GameRecord>.from(
+      await _recordRepository.listBySource('master', limit: 1000),
+    );
+    games.sort((GameRecord a, GameRecord b) {
+      final int cat = _masterCategoryRank(
+        _masterCategoryOf(a),
+      ).compareTo(_masterCategoryRank(_masterCategoryOf(b)));
+      if (cat != 0) {
+        return cat;
+      }
+      final int year = _masterYearOf(a).compareTo(_masterYearOf(b));
+      if (year != 0) {
+        return year;
+      }
+      return a.title.compareTo(b.title);
+    });
+    return games;
+  }
+
+  static Map<String, dynamic> _masterSession(GameRecord record) {
+    try {
+      final Object decoded = jsonDecode(record.sessionJson);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+    } catch (_) {}
+    return const <String, dynamic>{};
+  }
+
+  static String _masterCategoryOf(GameRecord record) {
+    final Object? raw = _masterSession(record)['category'];
+    if (raw is String && raw.trim().isNotEmpty) {
+      return raw.trim();
+    }
+    final Object? tags = _masterSession(record)['tags'];
+    if (tags is List && tags.isNotEmpty && tags.first is String) {
+      return tags.first as String;
+    }
+    return 'classic';
+  }
+
+  static int _masterYearOf(GameRecord record) {
+    final Object? year = _masterSession(record)['year'];
+    if (year is num) {
+      return year.toInt();
+    }
+    return 0;
+  }
+
+  static int _masterCategoryRank(String id) {
+    const List<String> order = <String>[
+      'ancient',
+      'international',
+      'classic',
+      'ai',
+    ];
+    final int i = order.indexOf(id);
+    return i < 0 ? 99 : i;
   }
 
   /// 从名局记录的 sessionJson 解析副标题（players · event · year）。
@@ -748,10 +890,118 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       final String? event = m['event'] as String?;
       final Object? year = m['year'];
       if (players != null && event != null && year != null) {
-        return '$players · $event · $year';
+        final String yearText = '$year';
+        if (yearText != '0') {
+          return '$players · $event · $year';
+        }
+        return '$players · $event';
       }
     } catch (_) {}
     return record.title;
+  }
+
+  Widget _buildMasterGamesPane(AsyncSnapshot<List<GameRecord>> snapshot) {
+    if (snapshot.connectionState != ConnectionState.done) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (snapshot.hasError) {
+      return Center(
+        child: Text(
+          _t(
+            zh: '加载名局失败: ${snapshot.error}',
+            en: 'Failed to load master games: ${snapshot.error}',
+            ja: '名局読み込み失敗: ${snapshot.error}',
+            ko: '명국 불러오기 실패: ${snapshot.error}',
+          ),
+        ),
+      );
+    }
+    final List<GameRecord> all = snapshot.data ?? <GameRecord>[];
+    final List<GameRecord> games = _masterCategoryFilter == null
+        ? all
+        : all
+              .where(
+                (GameRecord r) => _masterCategoryOf(r) == _masterCategoryFilter,
+              )
+              .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: Row(
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: FilterChip(
+                  label: Text('${_s.masterCategoryAll} (${all.length})'),
+                  selected: _masterCategoryFilter == null,
+                  onSelected: (_) {
+                    setState(() {
+                      _masterCategoryFilter = null;
+                    });
+                  },
+                ),
+              ),
+              ..._masterCategoryIds.map((String id) {
+                final int count = all
+                    .where((GameRecord r) => _masterCategoryOf(r) == id)
+                    .length;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    label: Text('${_s.masterCategoryLabel(id)} ($count)'),
+                    selected: _masterCategoryFilter == id,
+                    onSelected: (_) {
+                      setState(() {
+                        _masterCategoryFilter = id;
+                      });
+                    },
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
+        Expanded(
+          child: games.isEmpty
+              ? Center(
+                  child: Text(
+                    _t(
+                      zh: '暂无名局',
+                      en: 'No master games',
+                      ja: '名局がありません',
+                      ko: '명국이 없습니다',
+                    ),
+                  ),
+                )
+              : ListView.separated(
+                  itemCount: games.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (_, int i) {
+                    final GameRecord record = games[i];
+                    return ListTile(
+                      title: Text(record.title),
+                      subtitle: Text(_masterRecordSubtitle(record)),
+                      trailing: Text(
+                        _s.masterCategoryLabel(_masterCategoryOf(record)),
+                        style: Theme.of(context).textTheme.labelSmall,
+                      ),
+                      onTap: () async {
+                        if (!context.mounted) return;
+                        await Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => _reviewPageFor(record),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
   }
 
   Widget _buildLibraryHome(BuildContext context) {
@@ -840,68 +1090,13 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                 _buildRecordList('battle_local'),
                 _buildRecordList('download'),
                 FutureBuilder<List<GameRecord>>(
-                  future: _loadMasterGamesFromDb(),
+                  future: _sourceFutures['master'] ??= _loadMasterGamesFromDb(),
                   builder:
                       (
                         BuildContext context,
                         AsyncSnapshot<List<GameRecord>> snapshot,
                       ) {
-                        if (snapshot.connectionState != ConnectionState.done) {
-                          return const Center(
-                            child: CircularProgressIndicator(),
-                          );
-                        }
-                        if (snapshot.hasError) {
-                          return Center(
-                            child: Text(
-                              _t(
-                                zh: '加载名局失败: ${snapshot.error}',
-                                en: 'Failed to load master games: ${snapshot.error}',
-                                ja: '名局読み込み失敗: ${snapshot.error}',
-                                ko: '명국 불러오기 실패: ${snapshot.error}',
-                              ),
-                            ),
-                          );
-                        }
-                        final List<GameRecord> games =
-                            snapshot.data ?? <GameRecord>[];
-                        if (games.isEmpty) {
-                          return Center(
-                            child: Text(
-                              _t(
-                                zh: '暂无名局',
-                                en: 'No master games',
-                                ja: '名局がありません',
-                                ko: '명국이 없습니다',
-                              ),
-                            ),
-                          );
-                        }
-                        return ListView.separated(
-                          itemCount: games.length,
-                          separatorBuilder: (_, _) => const Divider(height: 1),
-                          itemBuilder: (_, int i) {
-                            final GameRecord record = games[i];
-                            return ListTile(
-                              title: Text(record.title),
-                              subtitle: Text(_masterRecordSubtitle(record)),
-                              trailing: const Icon(Icons.chevron_right),
-                              onTap: () async {
-                                if (!context.mounted) return;
-                                await Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => RecordReviewPage(
-                                      initialSgfContent: record.sgf,
-                                      initialTitle: record.title,
-                                      initialRecordId: record.id,
-                                      initialSource: record.source,
-                                    ),
-                                  ),
-                                );
-                              },
-                            );
-                          },
-                        );
+                        return _buildMasterGamesPane(snapshot);
                       },
                 ),
               ],
@@ -927,6 +1122,23 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     );
   }
 
+  void _returnToImport() {
+    _reviewTryPendingConfirmTimer.cancel();
+    setState(() {
+      _sgf = null;
+      _path = <SgfNode>[];
+      _selectedVariation = 0;
+      _reviewTryMode = false;
+      _reviewTryState = null;
+      _reviewTryPendingPoint = null;
+      _reviewHintPoints = <GoPoint>[];
+      _status = null;
+      _recordId = null;
+      _winratesByBranch.clear();
+      _winrateNotes.clear();
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -937,13 +1149,26 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         widget.initialSgfContent!.isNotEmpty) {
       final SgfGame parsed = _sgfParser.parse(widget.initialSgfContent!);
       _sgf = parsed;
-      debugPrint('[复盘] init recordId=${widget.initialRecordId ?? '-'} mainLine=${parsed.mainLineNodes().length} ab=${parsed.initialBlackStones.length} aw=${parsed.initialWhiteStones.length}');
-      _ruleset = parsed.rules.isEmpty
-          ? _ruleset
-          : rulePresetFromString(parsed.rules).id;
-      _komiController.text = parsed.komi.toString();
+      appLog(
+        '[复盘] init recordId=${widget.initialRecordId ?? '-'} mainLine=${parsed.mainLineNodes().length} ab=${parsed.initialBlackStones.length} aw=${parsed.initialWhiteStones.length}',
+      );
+      final String? storedRuleset = widget.initialRuleset?.trim();
+      final double? storedKomi = widget.initialKomi;
+      if (storedRuleset != null &&
+          storedRuleset.isNotEmpty &&
+          storedKomi != null) {
+        _ruleset = rulePresetFromString(storedRuleset).id;
+        _komiController.text = storedKomi.toString();
+        _sgf = parsed.copyWith(komi: storedKomi, rules: _ruleset);
+      } else {
+        _ruleset = parsed.rules.isEmpty
+            ? _ruleset
+            : rulePresetFromString(parsed.rules).id;
+        _komiController.text = parsed.komi.toString();
+      }
       _recordId = widget.initialRecordId;
       _recordSource = widget.initialSource ?? 'master';
+      _applyStoredWinrates(widget.initialWinrateJson);
       _status = widget.initialTitle == null
           ? _t(
               zh: '已加载棋谱',
@@ -985,7 +1210,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       // SGF 根节点已包含开局贴子时，不再叠加 session 初始局面，避免双重开局。
       if (_sgf!.initialBlackStones.isNotEmpty ||
           _sgf!.initialWhiteStones.isNotEmpty) {
-        debugPrint('[复盘] skip applyInitialStones: sgf root already has AB/AW recordId=$_recordId');
+        appLog(
+          '[复盘] skip applyInitialStones: sgf root already has AB/AW recordId=$_recordId',
+        );
         return;
       }
       final int sgfMainLine = _sgf!.mainLineNodes().length;
@@ -993,12 +1220,14 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           (data['moves'] as List<dynamic>? ?? const <dynamic>[]).length;
       // SGF 主线手数与 session 一致时，说明 SGF 已自洽，补贴会造成错位。
       if (sgfMainLine > 0 && sessionMoves > 0 && sgfMainLine == sessionMoves) {
-        debugPrint('[复盘] skip applyInitialStones: sgf/session aligned recordId=$_recordId sgfMainLine=$sgfMainLine sessionMoves=$sessionMoves');
+        appLog(
+          '[复盘] skip applyInitialStones: sgf/session aligned recordId=$_recordId sgfMainLine=$sgfMainLine sessionMoves=$sessionMoves',
+        );
         return;
       }
       final List<dynamic>? raw = data['initialStones'] as List<dynamic>?;
       if (raw == null || raw.isEmpty) {
-        debugPrint('[复盘] initialStones empty recordId=$_recordId');
+        appLog('[复盘] initialStones empty recordId=$_recordId');
         return;
       }
       final int boardSize = _sgf!.boardSize;
@@ -1009,8 +1238,13 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         final String player = s['player'] as String? ?? 'black';
         final int? x = (s['x'] as num?)?.toInt();
         final int? y = (s['y'] as num?)?.toInt();
-        if (x == null || y == null ||
-            x < 0 || x >= boardSize || y < 0 || y >= boardSize) continue;
+        if (x == null ||
+            y == null ||
+            x < 0 ||
+            x >= boardSize ||
+            y < 0 ||
+            y >= boardSize)
+          continue;
         if (player == 'white') {
           white.add(GoPoint(x, y));
         } else {
@@ -1018,11 +1252,13 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         }
       }
       if (black.isEmpty && white.isEmpty) {
-        debugPrint('[复盘] initialStones parsed empty recordId=$_recordId');
+        appLog('[复盘] initialStones parsed empty recordId=$_recordId');
         return;
       }
       if (!mounted) return;
-      debugPrint('[复盘] applyInitialStones recordId=$_recordId black=${black.length} white=${white.length}');
+      appLog(
+        '[复盘] applyInitialStones recordId=$_recordId black=${black.length} white=${white.length}',
+      );
       setState(() {
         _sgf = SgfGame(
           boardSize: _sgf!.boardSize,
@@ -1090,6 +1326,19 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     }
   }
 
+  void _applyStoredWinrates(String? raw) {
+    if (raw == null || raw.trim().isEmpty) {
+      return;
+    }
+    final Map<String, Map<int, double>> loaded = parseStoredWinrateJson(raw);
+    if (loaded.isEmpty) {
+      return;
+    }
+    _winratesByBranch
+      ..clear()
+      ..addAll(loaded);
+  }
+
   Future<void> _loadInitialRecordWinrates() async {
     if (_recordId == null) {
       return;
@@ -1099,63 +1348,25 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       return;
     }
     _loadWinrateNotesFromSession(rec.sessionJson);
-    if (rec.winrateJson.isEmpty) {
+    final Map<String, Map<int, double>> loaded = parseStoredWinrateJson(
+      rec.winrateJson,
+    );
+    if (!mounted || loaded.isEmpty) {
       return;
     }
-    try {
-      final Map<String, dynamic> raw =
-          jsonDecode(rec.winrateJson) as Map<String, dynamic>;
-      final Map<String, Map<int, double>> loaded = <String, Map<int, double>>{};
-      final dynamic firstValue = raw.isNotEmpty ? raw.values.first : null;
-      if (firstValue is num) {
-        // 旧格式：扁平 { "1": 0.55, "2": 0.52 } -> 主战线
-        final Map<int, double> parsed = raw.map(
-          (String k, dynamic v) => MapEntry<int, double>(
-            int.tryParse(k) ?? 0,
-            (v as num).toDouble(),
-          ),
-        )..remove(0);
-        if (parsed.isNotEmpty) {
-          loaded[''] = parsed;
-        }
-      } else if (firstValue is Map) {
-        // 新格式：按分支 { "": { "1": 0.55 }, "0-1": { "4": 0.48 } }
-        for (final MapEntry<String, dynamic> entry in raw.entries) {
-          final Map<String, dynamic> branchRaw =
-              (entry.value as Map<dynamic, dynamic>?)
-                  ?.map((dynamic k, dynamic v) =>
-                      MapEntry<String, dynamic>(k.toString(), v)) ??
-              <String, dynamic>{};
-          final Map<int, double> branch = branchRaw.map(
-            (String k, dynamic v) => MapEntry<int, double>(
-              int.tryParse(k) ?? 0,
-              (v as num).toDouble(),
-            ),
-          )..remove(0);
-          if (branch.isNotEmpty) {
-            loaded[entry.key] = branch;
-          }
-        }
+    setState(() {
+      _winratesByBranch
+        ..clear()
+        ..addAll(loaded);
+      if (_isBattleRecord) {
+        _status = _t(
+          zh: '已加载对局内胜率数据',
+          en: 'Loaded in-game winrate data',
+          ja: '対局内勝率データを読み込みました',
+          ko: '대국 내 승률 데이터 로드 완료',
+        );
       }
-      if (!mounted || loaded.isEmpty) {
-        return;
-      }
-      setState(() {
-        _winratesByBranch
-          ..clear()
-          ..addAll(loaded);
-        if (_isBattleRecord) {
-          _status = _t(
-            zh: '已加载对局内胜率数据',
-            en: 'Loaded in-game winrate data',
-            ja: '対局内勝率データを読み込みました',
-            ko: '대국 내 승률 데이터 로드 완료',
-          );
-        }
-      });
-    } catch (_) {
-      // ignore invalid stored winrate JSON
-    }
+    });
   }
 
   void _loadWinrateNotesFromSession(String sessionJson) {
@@ -1167,12 +1378,14 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       if (raw is! Map) return;
       final Map<String, Map<String, String>> loaded =
           <String, Map<String, String>>{};
-      for (final MapEntry<dynamic, dynamic> entry in (raw as Map<dynamic, dynamic>).entries) {
+      for (final MapEntry<dynamic, dynamic> entry
+          in (raw as Map<dynamic, dynamic>).entries) {
         final String branchKey = entry.key.toString();
         final dynamic val = entry.value;
         if (val is! Map) continue;
         loaded[branchKey] = (val as Map<dynamic, dynamic>).map(
-          (dynamic k, dynamic v) => MapEntry<String, String>(k.toString(), v.toString()),
+          (dynamic k, dynamic v) =>
+              MapEntry<String, String>(k.toString(), v.toString()),
         );
       }
       _winrateNotes
@@ -1187,7 +1400,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
 
   void _recordWinrateDelta(String branchKey, int turn, double delta) {
     if (delta > _winrateRiseThreshold || delta < -_winrateDropThreshold) {
-      final String pct = (delta >= 0 ? '+' : '') + (delta * 100).toStringAsFixed(1);
+      final String pct =
+          (delta >= 0 ? '+' : '') + (delta * 100).toStringAsFixed(1);
       _winrateNotes[branchKey] ??= <String, String>{};
       _winrateNotes[branchKey]![turn.toString()] = _t(
         zh: '第${turn}手 $pct%',
@@ -1207,32 +1421,33 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       final Map<String, dynamic> data = rec.sessionJson.isEmpty
           ? <String, dynamic>{}
           : Map<String, dynamic>.from(
-              jsonDecode(rec.sessionJson) as Map<String, dynamic>);
+              jsonDecode(rec.sessionJson) as Map<String, dynamic>,
+            );
       data['winrateNotes'] = _winrateNotes.map(
-        (String k, Map<String, String> v) =>
-            MapEntry<String, dynamic>(k, v),
+        (String k, Map<String, String> v) => MapEntry<String, dynamic>(k, v),
       );
       final int now = DateTime.now().millisecondsSinceEpoch;
-      await _recordRepository.upsert(GameRecord(
-        id: rec.id,
-        source: rec.source,
-        title: rec.title,
-        boardSize: rec.boardSize,
-        ruleset: rec.ruleset,
-        komi: rec.komi,
-        sgf: rec.sgf,
-        status: rec.status,
-        sessionJson: jsonEncode(data),
-        winrateJson: rec.winrateJson,
-        createdAtMs: rec.createdAtMs,
-        updatedAtMs: now,
-      ));
+      await _recordRepository.upsert(
+        GameRecord(
+          id: rec.id,
+          source: rec.source,
+          title: rec.title,
+          boardSize: rec.boardSize,
+          ruleset: rec.ruleset,
+          komi: rec.komi,
+          sgf: rec.sgf,
+          status: rec.status,
+          sessionJson: jsonEncode(data),
+          winrateJson: rec.winrateJson,
+          createdAtMs: rec.createdAtMs,
+          updatedAtMs: now,
+        ),
+      );
     } catch (_) {}
   }
 
   @override
   void dispose() {
-    unawaited(_katagoAdapter.shutdown());
     _reviewTryPendingConfirmTimer.cancel();
     _komiController.dispose();
     _urlController.dispose();
@@ -1333,40 +1548,16 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       setState(() => _sourceFutures.remove('download'));
     }
     if (existing != null && existing.winrateJson.isNotEmpty) {
-      try {
-        final Map<String, dynamic> raw =
-            jsonDecode(existing.winrateJson) as Map<String, dynamic>;
-        final dynamic firstValue = raw.isNotEmpty ? raw.values.first : null;
-        if (firstValue is num) {
-          final Map<int, double> parsed = raw.map(
-            (String k, dynamic v) => MapEntry<int, double>(
-              int.tryParse(k) ?? 0,
-              (v as num).toDouble(),
-            ),
-          )..remove(0);
-          if (mounted && parsed.isNotEmpty) {
-            setState(() => _winratesByBranch[''] = Map<int, double>.from(parsed));
-          }
-        } else if (firstValue is Map && mounted) {
-          for (final MapEntry<String, dynamic> entry in raw.entries) {
-            final Map<String, dynamic> br =
-                (entry.value as Map<dynamic, dynamic>?)?.map(
-                  (dynamic k, dynamic v) =>
-                      MapEntry<String, dynamic>(k.toString(), v),
-                ) ?? <String, dynamic>{};
-            final Map<int, double> branch = br.map(
-              (String k, dynamic v) => MapEntry<int, double>(
-                int.tryParse(k) ?? 0,
-                (v as num).toDouble(),
-              ),
-            )..remove(0);
-            if (branch.isNotEmpty) {
-              setState(() => _winratesByBranch[entry.key] =
-                  Map<int, double>.from(branch));
-            }
-          }
-        }
-      } catch (_) {}
+      final Map<String, Map<int, double>> loaded = parseStoredWinrateJson(
+        existing.winrateJson,
+      );
+      if (mounted && loaded.isNotEmpty) {
+        setState(() {
+          _winratesByBranch
+            ..clear()
+            ..addAll(loaded);
+        });
+      }
     }
   }
 
@@ -1393,22 +1584,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       );
     });
     try {
+      final String content = await _sgfUrlFetcher.fetch(url);
       final Uri uri = Uri.parse(url);
-      final http.Response response = await http.get(uri);
-      if (response.statusCode != 200) {
-        throw StateError('HTTP ${response.statusCode}');
-      }
-      final String content = response.body;
-      if (content.trim().isEmpty) {
-        throw StateError(
-          _t(
-            zh: '下载内容为空',
-            en: 'Downloaded content is empty',
-            ja: 'ダウンロード内容が空です',
-            ko: '다운로드 내용이 비어 있습니다',
-          ),
-        );
-      }
       final SgfGame parsed = _sgfParser.parse(content);
       final String title = uri.pathSegments.isNotEmpty
           ? uri.pathSegments.last
@@ -1526,11 +1703,13 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       final String path = p.join(dir.path, 'game.sgf');
       final File file = File(path);
       await file.writeAsString(sgfString, encoding: utf8);
-      await Share.shareXFiles(
-        <XFile>[XFile(path)],
-        text: _sgf!.gameName?.isNotEmpty == true
-            ? _sgf!.gameName
-            : _t(zh: '棋谱', en: 'SGF game record', ja: '棋譜', ko: '기보'),
+      await SharePlus.instance.share(
+        ShareParams(
+          files: <XFile>[XFile(path)],
+          text: _sgf!.gameName?.isNotEmpty == true
+              ? _sgf!.gameName
+              : _t(zh: '棋谱', en: 'SGF game record', ja: '棋譜', ko: '기보'),
+        ),
       );
     } on Exception catch (e) {
       if (!mounted) return;
@@ -1560,65 +1739,78 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       builder: (BuildContext context) {
         int index = selectedIndex;
         return StatefulBuilder(
-          builder: (BuildContext context, void Function(void Function()) setDialogState) {
-            return AlertDialog(
-              title: Text(
-                _t(zh: '续下', en: 'Continue Play', ja: '続き対局', ko: '계속 대국'),
-              ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      _t(
-                        zh: '选择 AI 难度（规则沿用当前棋谱）',
-                        en: 'Select AI strength (rules from current SGF)',
-                        ja: 'AI強さを選択（ルールは棋譜に従う）',
-                        ko: 'AI 난이도 선택 (규칙은 현재 기보 따름)',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButton<int>(
-                      value: index.clamp(0, profiles.length - 1),
-                      isExpanded: true,
-                      items: List<DropdownMenuItem<int>>.generate(
-                        profiles.length,
-                        (int i) => DropdownMenuItem<int>(
-                          value: i,
-                          child: Text(
-                            '${_s.aiProfileName(profiles[i].id, profiles[i].name)} (${profiles[i].maxVisits})',
+          builder:
+              (
+                BuildContext context,
+                void Function(void Function()) setDialogState,
+              ) {
+                return AlertDialog(
+                  title: Text(
+                    _t(zh: '续下', en: 'Continue Play', ja: '続き対局', ko: '계속 대국'),
+                  ),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          _t(
+                            zh: '选择 AI 难度（规则沿用当前棋谱）',
+                            en: 'Select AI strength (rules from current SGF)',
+                            ja: 'AI強さを選択（ルールは棋譜に従う）',
+                            ko: 'AI 난이도 선택 (규칙은 현재 기보 따름)',
                           ),
                         ),
+                        const SizedBox(height: 12),
+                        DropdownButton<int>(
+                          value: index.clamp(0, profiles.length - 1),
+                          isExpanded: true,
+                          items: List<DropdownMenuItem<int>>.generate(
+                            profiles.length,
+                            (int i) => DropdownMenuItem<int>(
+                              value: i,
+                              child: Text(
+                                _s.aiProfileName(
+                                  profiles[i].id,
+                                  profiles[i].name,
+                                ),
+                              ),
+                            ),
+                          ),
+                          onChanged: (int? value) {
+                            if (value != null) {
+                              setDialogState(() => index = value);
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: <Widget>[
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: Text(
+                        _t(zh: '取消', en: 'Cancel', ja: 'キャンセル', ko: '취소'),
                       ),
-                      onChanged: (int? value) {
-                        if (value != null) {
-                          setDialogState(() => index = value);
-                        }
-                      },
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.of(context).pop(index),
+                      child: Text(
+                        _t(zh: '开始', en: 'Start', ja: '開始', ko: '시작'),
+                      ),
                     ),
                   ],
-                ),
-              ),
-              actions: <Widget>[
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: Text(_t(zh: '取消', en: 'Cancel', ja: 'キャンセル', ko: '취소')),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(context).pop(index),
-                  child: Text(_t(zh: '开始', en: 'Start', ja: '開始', ko: '시작')),
-                ),
-              ],
-            );
-          },
+                );
+              },
         );
       },
     );
     if (chosen == null || !mounted) return;
     selectedIndex = chosen.clamp(0, profiles.length - 1);
     final AnalysisProfile profile = profiles[selectedIndex];
-    final GameRules rules = rulePresetFromString(_sgf!.rules).toGameRules(komi: _sgf!.komi);
+    final GameRules rules = rulePresetFromString(
+      _sgf!.rules,
+    ).toGameRules(komi: _sgf!.komi);
     await AIPlayPage.pushContinuePlay(
       context,
       initialGameState: state,
@@ -1668,7 +1860,6 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
 
   /// 胜率补全不设单步超时，避免长棋谱中途被判定超时（传较大值给引擎）。
   static const int _winrateFillTimeoutMs = 86400000; // 24h
-
 
   Future<void> _analyzeCurrentWinrate() async {
     if (_sgf == null || _analyzing) {
@@ -1767,9 +1958,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
 
   /// 当前分支胜率未全覆盖时为 true；已完整不显示「胜率自动补全」。
   bool get _isWinrateIncomplete {
-    final int total = _path
-        .where((SgfNode n) => n.move != null)
-        .length;
+    final int total = _path.where((SgfNode n) => n.move != null).length;
     if (total <= 0) return false;
     final Map<int, double>? branch = _winratesByBranch[_currentBranchKey];
     for (int t = 1; t <= total; t++) {
@@ -1786,54 +1975,39 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     for (final MapEntry<String, Map<int, double>> entry
         in _winratesByBranch.entries) {
       if (entry.value.isEmpty) continue;
-      byBranch[entry.key] = entry.value
-          .map((int k, double v) => MapEntry<String, dynamic>(k.toString(), v));
+      byBranch[entry.key] = entry.value.map(
+        (int k, double v) => MapEntry<String, dynamic>(k.toString(), v),
+      );
     }
     // 主战线键 "" 若本次未写入，则保留原记录中的主战线胜率，避免丢失
     if (!byBranch.containsKey('') && rec.winrateJson.isNotEmpty) {
-      try {
-        final Map<String, dynamic> raw =
-            jsonDecode(rec.winrateJson) as Map<String, dynamic>;
-        final dynamic firstValue = raw.isNotEmpty ? raw.values.first : null;
-        if (firstValue is num) {
-          final Map<int, double> parsed = raw.map(
-            (String k, dynamic v) => MapEntry<int, double>(
-              int.tryParse(k) ?? 0,
-              (v as num).toDouble(),
-            ),
-          )..remove(0);
-          if (parsed.isNotEmpty) {
-            byBranch[''] = parsed
-                .map((int k, double v) => MapEntry<String, dynamic>(k.toString(), v));
-          }
-        } else if (firstValue is Map && raw[''] != null) {
-          final Map<String, dynamic>? mainRaw =
-              (raw[''] as Map<dynamic, dynamic>?)?.map(
-                (dynamic k, dynamic v) =>
-                    MapEntry<String, dynamic>(k.toString(), v),
-              );
-          if (mainRaw != null && mainRaw.isNotEmpty) {
-            byBranch[''] = mainRaw;
-          }
-        }
-      } catch (_) {}
+      final Map<int, double>? main = parseStoredWinrateJson(
+        rec.winrateJson,
+      )[''];
+      if (main != null && main.isNotEmpty) {
+        byBranch[''] = main.map(
+          (int k, double v) => MapEntry<String, dynamic>(k.toString(), v),
+        );
+      }
     }
     final String winrateJson = jsonEncode(byBranch);
     final int now = DateTime.now().millisecondsSinceEpoch;
-    await _recordRepository.upsert(GameRecord(
-      id: rec.id,
-      source: rec.source,
-      title: rec.title,
-      boardSize: rec.boardSize,
-      ruleset: rec.ruleset,
-      komi: rec.komi,
-      sgf: rec.sgf,
-      status: rec.status,
-      sessionJson: rec.sessionJson,
-      winrateJson: winrateJson,
-      createdAtMs: rec.createdAtMs,
-      updatedAtMs: now,
-    ));
+    await _recordRepository.upsert(
+      GameRecord(
+        id: rec.id,
+        source: rec.source,
+        title: rec.title,
+        boardSize: rec.boardSize,
+        ruleset: rec.ruleset,
+        komi: rec.komi,
+        sgf: rec.sgf,
+        status: rec.status,
+        sessionJson: rec.sessionJson,
+        winrateJson: winrateJson,
+        createdAtMs: rec.createdAtMs,
+        updatedAtMs: now,
+      ),
+    );
   }
 
   /// 枚举主战线与所有变化图分支：(branchKey, 该分支的 moveTokens)。
@@ -1849,13 +2023,14 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           .map((GoMove m) => m.toProtocolToken(_sgf!.boardSize))
           .toList();
     }
+
     out.add((branchKey: '', moveTokens: tokens(mainLine)));
     for (int idx = 0; idx < mainLine.length; idx++) {
       final SgfNode node = mainLine[idx];
       if (node.children.length <= 1) continue;
       for (int i = 1; i < node.children.length; i++) {
-        final List<SgfNode> variationPath = mainLine.sublist(0, idx + 1) +
-            _pathToLeaf(node.children[i]);
+        final List<SgfNode> variationPath =
+            mainLine.sublist(0, idx + 1) + _pathToLeaf(node.children[i]);
         final String key = _pathToBranchKey(variationPath);
         out.add((branchKey: key, moveTokens: tokens(variationPath)));
       }
@@ -1894,7 +2069,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         ? StoneColor.white
         : StoneColor.black;
     final RulePreset preset = rulePresetFromString(_ruleset);
-    final double komi = double.tryParse(_komiController.text) ?? preset.defaultKomi;
+    final double komi =
+        double.tryParse(_komiController.text) ?? preset.defaultKomi;
     final AnalysisProfile profile = _profileForWinrateFill();
 
     setState(() {
@@ -2150,8 +2326,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   int get _currentTurn => _path.length;
 
   /// 主战线总手数（固定，不随当前是否在变化图而变）。
-  int get _mainLineLength =>
-      _sgf == null ? 0 : _sgf!.mainLineNodes().length;
+  int get _mainLineLength => _sgf == null ? 0 : _sgf!.mainLineNodes().length;
 
   /// 胜率图高亮手数：主战线为当前手数，变化图为分支点手数（便于与主战线尺度一致）。
   int get _chartHighlightTurn {
@@ -2230,14 +2405,15 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     if (_winratesByBranch.isEmpty) {
       return <WinrateSeries>[];
     }
-    final List<String> keys = _winratesByBranch.keys
-        .where((String k) => _winratesByBranch[k]!.isNotEmpty)
-        .toList()
-      ..sort((String a, String b) {
-        if (a.isEmpty) return -1;
-        if (b.isEmpty) return 1;
-        return a.compareTo(b);
-      });
+    final List<String> keys =
+        _winratesByBranch.keys
+            .where((String k) => _winratesByBranch[k]!.isNotEmpty)
+            .toList()
+          ..sort((String a, String b) {
+            if (a.isEmpty) return -1;
+            if (b.isEmpty) return 1;
+            return a.compareTo(b);
+          });
     if (keys.isEmpty) return <WinrateSeries>[];
     final int mainLen = _mainLineLength;
     final Color primary = Theme.of(context).colorScheme.primary;
@@ -2248,8 +2424,10 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       if (key.isNotEmpty) {
         final int branchTurn = key.split('-').length;
         data = Map<int, double>.fromEntries(
-          data.entries.where((MapEntry<int, double> e) =>
-              e.key >= branchTurn && e.key <= mainLen),
+          data.entries.where(
+            (MapEntry<int, double> e) =>
+                e.key >= branchTurn && e.key <= mainLen,
+          ),
         );
       } else {
         data = Map<int, double>.fromEntries(
@@ -2260,11 +2438,13 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       final Color color = key.isEmpty
           ? primary
           : _variationChartColors[(i - 1) % _variationChartColors.length];
-      result.add(WinrateSeries(
-        winrates: data,
-        color: color,
-        label: key.isEmpty ? null : key,
-      ));
+      result.add(
+        WinrateSeries(
+          winrates: data,
+          color: color,
+          label: key.isEmpty ? null : key,
+        ),
+      );
     }
     return result;
   }
@@ -2274,8 +2454,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     if (!_canSaveRecord || _sgf == null || _recordId == null) {
       return;
     }
-    final GameRecord? record =
-        await _recordRepository.loadById(_recordId!);
+    final GameRecord? record = await _recordRepository.loadById(_recordId!);
     if (record == null || !mounted) {
       return;
     }
@@ -2303,15 +2482,15 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     if (node == null || !_canSaveRecord) {
       return;
     }
-    final TextEditingController ctrl = TextEditingController(text: node.comment ?? '');
+    final TextEditingController ctrl = TextEditingController(
+      text: node.comment ?? '',
+    );
     if (!mounted) return;
     final String? result = await showDialog<String>(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text(
-            _t(zh: '打谱笔记', en: 'Note', ja: '棋譜メモ', ko: '기보 메모'),
-          ),
+          title: Text(_t(zh: '打谱笔记', en: 'Note', ja: '棋譜メモ', ko: '기보 메모')),
           content: TextField(
             controller: ctrl,
             maxLines: 5,
@@ -2381,8 +2560,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       }
       return;
     }
-    final List<GoMove> tryMoves = _reviewTryState!.moves
-        .sublist(boardState.moves.length);
+    final List<GoMove> tryMoves = _reviewTryState!.moves.sublist(
+      boardState.moves.length,
+    );
     final SgfNode parent = _currentNode!;
     SgfNode? first;
     SgfNode? prev;
@@ -2407,7 +2587,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           final TextEditingController c = TextEditingController();
           return AlertDialog(
             title: Text(
-              _t(zh: '变化图标注', en: 'Variation label', ja: '変化図ラベル', ko: '변화도 라벨'),
+              _t(
+                zh: '变化图标注',
+                en: 'Variation label',
+                ja: '変化図ラベル',
+                ko: '변화도 라벨',
+              ),
             ),
             content: TextField(
               controller: c,
@@ -2423,10 +2608,14 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+                child: Text(
+                  MaterialLocalizations.of(context).cancelButtonLabel,
+                ),
               ),
               FilledButton(
-                onPressed: () => Navigator.of(context).pop(c.text.trim().isEmpty ? null : c.text.trim()),
+                onPressed: () => Navigator.of(
+                  context,
+                ).pop(c.text.trim().isEmpty ? null : c.text.trim()),
                 child: Text(MaterialLocalizations.of(context).okButtonLabel),
               ),
             ],
@@ -2449,7 +2638,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            _t(zh: '已保存为变化图', en: 'Saved as variation', ja: '変化図として保存しました', ko: '변화도로 저장됨'),
+            _t(
+              zh: '已保存为变化图',
+              en: 'Saved as variation',
+              ja: '変化図として保存しました',
+              ko: '변화도로 저장됨',
+            ),
           ),
         ),
       );
@@ -2460,9 +2654,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   /// 变化图链接只出现在「变化发生的那一手」的笔记里：当前手有多个续着时，笔记区显示「本手有 N 个变化图」及链接；棋谱可有多处有变化图，走到哪一手就显示哪一手的内容。
   void _goToVariation(int childIndex) {
     final SgfNode? node = _currentNode;
-    if (node == null ||
-        childIndex <= 0 ||
-        childIndex >= node.children.length) {
+    if (node == null || childIndex <= 0 || childIndex >= node.children.length) {
       return;
     }
     setState(() {
@@ -2479,7 +2671,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   void _next() {
     final SgfNode? node = _currentNode;
     if (node == null || node.children.isEmpty) {
-      debugPrint('[复盘] next blocked turn=$_currentTurn try=$_reviewTryMode hasNode=${node != null} children=${node?.children.length ?? 0}');
+      appLog(
+        '[复盘] next blocked turn=$_currentTurn try=$_reviewTryMode hasNode=${node != null} children=${node?.children.length ?? 0}',
+      );
       return;
     }
     final int idx = _selectedVariation.clamp(0, node.children.length - 1);
@@ -2495,12 +2689,12 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _selectMode = false;
       _selectedIds.clear();
     });
-    debugPrint('[复盘] next turn $from -> $_currentTurn try=$_reviewTryMode');
+    appLog('[复盘] next turn $from -> $_currentTurn try=$_reviewTryMode');
   }
 
   void _prev() {
     if (_path.isEmpty) {
-      debugPrint('[复盘] prev blocked turn=$_currentTurn try=$_reviewTryMode');
+      appLog('[复盘] prev blocked turn=$_currentTurn try=$_reviewTryMode');
       return;
     }
     final int from = _currentTurn;
@@ -2515,7 +2709,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _selectMode = false;
       _selectedIds.clear();
     });
-    debugPrint('[复盘] prev turn $from -> $_currentTurn try=$_reviewTryMode');
+    appLog('[复盘] prev turn $from -> $_currentTurn try=$_reviewTryMode');
   }
 
   /// 退出变化图，回到分支点（变化图开始的那一手）。
@@ -2537,7 +2731,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
   /// 点击胜率图跳转：X 轴为主战线，故始终跳到主战线第 turn 手。
   void _goToTurn(int turn) {
     if (_sgf == null) {
-      debugPrint('[复盘] goToTurn blocked: sgf null target=$turn');
+      appLog('[复盘] goToTurn blocked: sgf null target=$turn');
       return;
     }
     final List<SgfNode> mainLine = _sgf!.mainLineNodes();
@@ -2552,7 +2746,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         _reviewTryPendingPoint = null;
         _reviewHintPoints = <GoPoint>[];
       });
-      debugPrint('[复盘] goToTurn $from -> $_currentTurn target=$turn end=0 mainLine=${mainLine.length} try=$_reviewTryMode');
+      appLog(
+        '[复盘] goToTurn $from -> $_currentTurn target=$turn end=0 mainLine=${mainLine.length} try=$_reviewTryMode',
+      );
       return;
     }
     final int end = turn.clamp(1, mainLine.length);
@@ -2565,13 +2761,15 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
       _reviewTryPendingPoint = null;
       _reviewHintPoints = <GoPoint>[];
     });
-    debugPrint('[复盘] goToTurn $from -> $_currentTurn target=$turn end=$end mainLine=${mainLine.length} try=$_reviewTryMode');
+    appLog(
+      '[复盘] goToTurn $from -> $_currentTurn target=$turn end=$end mainLine=${mainLine.length} try=$_reviewTryMode',
+    );
   }
 
-  /// 打谱用黑方视角生成妙手/恶手文案（与复盘 buildHints 一致）；用当前分支胜率。让子时先手为白，需传 firstMoveIsBlack。
-  List<String> _buildReviewHints({required bool good}) {
-    if (_winratesForCurrentBranch.isEmpty) {
-      return <String>[];
+  /// 打谱用黑方视角生成妙手/恶手；用当前分支胜率。让子时先手为白，需传 firstMoveIsBlack。
+  List<MoveHint> _reviewMoveHints({required bool good}) {
+    if (_winratesForCurrentBranch.isEmpty || _sgf == null) {
+      return <MoveHint>[];
     }
     final bool firstMoveIsBlack = _sgf!.initialBlackStones.isEmpty;
     final List<MoveHint> hints = _analysisService.buildHints(
@@ -2585,15 +2783,51 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           (MoveHint h) =>
               good ? h.kind == HintKind.brilliant : h.kind == HintKind.blunder,
         )
-        .map(
-          (MoveHint h) => _t(
-            zh: '第${h.turn}手后${_blackWinrateLabel()} ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
-            en: 'After move ${h.turn}: ${_blackWinrateLabel()} ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
-            ja: '${h.turn}手後: ${_blackWinrateLabel()} ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
-            ko: '${h.turn}수 후: ${_blackWinrateLabel()} ${(h.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
-          ),
-        )
         .toList();
+  }
+
+  String _formatReviewHint(MoveHint hint) {
+    return _t(
+      zh: '第${hint.turn}手  ${_blackWinrateLabel()} ${(hint.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
+      en: 'Move ${hint.turn}: ${_blackWinrateLabel()} ${(hint.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
+      ja: '${hint.turn}手: ${_blackWinrateLabel()} ${(hint.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
+      ko: '${hint.turn}수: ${_blackWinrateLabel()} ${(hint.deltaPlayerWinrate * 100).toStringAsFixed(1)}%',
+    );
+  }
+
+  void _jumpToHint(MoveHint hint) {
+    _goToTurn(hint.turn);
+  }
+
+  void _jumpToWorstBlunder() {
+    final MoveHint? worst = GameAnalysisService.worstBlunder(
+      _reviewMoveHints(good: false),
+    );
+    if (worst == null) {
+      return;
+    }
+    _jumpToHint(worst);
+  }
+
+  List<Widget> _hintJumpLines(List<MoveHint> hints) {
+    return hints.map((MoveHint hint) {
+      return InkWell(
+        onTap: () => _jumpToHint(hint),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            children: <Widget>[
+              Expanded(child: Text(_formatReviewHint(hint))),
+              Icon(
+                Icons.chevron_right,
+                size: 18,
+                color: Theme.of(context).hintColor,
+              ),
+            ],
+          ),
+        ),
+      );
+    }).toList();
   }
 
   String _blackWinrateLabel() {
@@ -2654,24 +2888,15 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
     }
     final GoGameState? boardState = _stateAtPath();
     final bool compactReviewLayout = _recordId != null;
-    final List<String> reviewGoodHints = _buildReviewHints(good: true);
-    final List<String> reviewBadHints = _buildReviewHints(good: false);
+    final List<MoveHint> reviewGoodHints = _reviewMoveHints(good: true);
+    final List<MoveHint> reviewBadHints = _reviewMoveHints(good: false);
     final List<WinrateSeries> winrateSeriesList = _buildWinrateSeries(context);
     final Widget content = ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
       children: <Widget>[
-        if (!compactReviewLayout) ...<Widget>[
+        if (!compactReviewLayout && _sgf == null) ...<Widget>[
           Text(_s.tabReview, style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 12),
-          Text(
-            _t(
-              zh: '导入棋谱后会先校验规则信息。若 SGF 缺失贴目或规则，将在导入流程中要求补录，避免分析结果偏差。',
-              en: 'After import, rules metadata is validated first. If RU/KM is missing in SGF, you will be asked to complete it.',
-              ja: '棋譜インポート後、ルール情報を先に検証します。RU/KM欠落時は補完入力を求めます。',
-              ko: '기보 가져오기 후 규칙 정보를 먼저 검증합니다. SGF에 RU/KM이 없으면 보완 입력을 요청합니다.',
-            ),
-          ),
-          const SizedBox(height: 16),
           OutlinedButton.icon(
             onPressed: _importSgf,
             icon: const Icon(Icons.upload_file),
@@ -2715,13 +2940,23 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
         if (_sgf != null) ...<Widget>[
           const SizedBox(height: 12),
           Text(
-            '${_sgf!.gameName ?? _t(zh: '未命名', en: 'Untitled', ja: '無題', ko: '제목 없음')}  (${_sgf!.blackName ?? 'Black'} vs ${_sgf!.whiteName ?? 'White'})  ${_t(zh: '${_sgf!.mainLineNodes().length}手', en: '${_sgf!.mainLineNodes().length} moves', ja: '${_sgf!.mainLineNodes().length}手', ko: '${_sgf!.mainLineNodes().length}수')}',
+            '${_sgf!.gameName ?? _t(zh: '未命名', en: 'Untitled', ja: '無題', ko: '제목 없음')}  (${_sgf!.blackName ?? 'Black'} vs ${_sgf!.whiteName ?? 'White'})  ${_t(zh: '${_sgf!.mainLineNodes().length}手', en: '${_sgf!.mainLineNodes().length} moves', ja: '${_sgf!.mainLineNodes().length}手', ko: '${_sgf!.mainLineNodes().length}수')}${(_sgf!.result ?? '').trim().isEmpty ? '' : '  ${_localizedResultFromRe(_sgf!.result!)}'}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontWeight: FontWeight.bold),
           ),
+          if (!compactReviewLayout)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: _returnToImport,
+                child: Text(
+                  _t(zh: '换棋谱', en: 'Change SGF', ja: '棋譜を変更', ko: '기보 변경'),
+                ),
+              ),
+            ),
         ],
-        if (!compactReviewLayout) ...<Widget>[
+        if (!compactReviewLayout && _sgf == null) ...<Widget>[
           const SizedBox(height: 20),
           Text(
             _t(
@@ -2776,7 +3011,10 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                 (int i) => DropdownMenuItem<int>(
                   value: i,
                   child: Text(
-                    '${_s.aiProfileName(_reviewProfiles[i].id, _reviewProfiles[i].name)} (${_reviewProfiles[i].maxVisits})',
+                    _s.aiProfileName(
+                      _reviewProfiles[i].id,
+                      _reviewProfiles[i].name,
+                    ),
                   ),
                 ),
               ),
@@ -2792,41 +3030,43 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
           const SizedBox(height: 20),
         ],
         if (_sgf != null && boardState != null) ...<Widget>[
-          if (compactReviewLayout) ...<Widget>[
-            if (_reviewProfiles.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: <Widget>[
-                    Text(
-                      _t(zh: '难度:', en: 'Difficulty:', ja: '難易度:', ko: '난이도:'),
-                      style: const TextStyle(fontSize: 13),
+          if (_reviewProfiles.isNotEmpty) ...<Widget>[
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: <Widget>[
+                  Text(
+                    _t(zh: '难度:', en: 'Difficulty:', ja: '難易度:', ko: '난이도:'),
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  const SizedBox(width: 8),
+                  DropdownButton<int>(
+                    value: _reviewProfileIndex.clamp(
+                      0,
+                      _reviewProfiles.length - 1,
                     ),
-                    const SizedBox(width: 8),
-                    DropdownButton<int>(
-                      value: _reviewProfileIndex.clamp(
-                        0,
-                        _reviewProfiles.length - 1,
-                      ),
-                      isDense: true,
-                      items: List<DropdownMenuItem<int>>.generate(
-                        _reviewProfiles.length,
-                        (int i) => DropdownMenuItem<int>(
-                          value: i,
-                          child: Text(
-                            '${_s.aiProfileName(_reviewProfiles[i].id, _reviewProfiles[i].name)} (${_reviewProfiles[i].maxVisits})',
-                            style: const TextStyle(fontSize: 13),
+                    isDense: true,
+                    items: List<DropdownMenuItem<int>>.generate(
+                      _reviewProfiles.length,
+                      (int i) => DropdownMenuItem<int>(
+                        value: i,
+                        child: Text(
+                          _s.aiProfileName(
+                            _reviewProfiles[i].id,
+                            _reviewProfiles[i].name,
                           ),
+                          style: const TextStyle(fontSize: 13),
                         ),
                       ),
-                      onChanged: (int? value) {
-                        if (value != null)
-                          setState(() => _reviewProfileIndex = value);
-                      },
                     ),
-                  ],
-                ),
+                    onChanged: (int? value) {
+                      if (value != null)
+                        setState(() => _reviewProfileIndex = value);
+                    },
+                  ),
+                ],
               ),
+            ),
           ],
           ReviewBoardPanel(
             title: null, // 隐藏标题，头部已显示棋谱信息
@@ -2851,7 +3091,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
             maxTurn: _mainLineLength,
             winrates: winrateSeriesList.isEmpty ? _winrates : null,
             winrateSeries: winrateSeriesList.isEmpty ? null : winrateSeriesList,
-            highlightTurnWinrate: _winratesForCurrentBranch.containsKey(_chartHighlightTurn)
+            highlightTurnWinrate:
+                _winratesForCurrentBranch.containsKey(_chartHighlightTurn)
                 ? _winratesForCurrentBranch[_chartHighlightTurn]
                 : null,
             onTurnSelected: _goToTurn,
@@ -2867,13 +3108,15 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                 _reviewTryMode = false;
                 _reviewTryState = null;
                 _reviewTryPendingConfirmTimer.cancel();
-        _reviewTryPendingPoint = null;
+                _reviewTryPendingPoint = null;
                 _reviewHintPoints = <GoPoint>[];
               });
             },
             onSaveAsVariation: _canSaveRecord ? _saveTryAsVariation : null,
             tentativePoint: _reviewTryMode ? _reviewTryPendingPoint : null,
-            tentativeStone: _reviewTryMode ? (_reviewTryState ?? boardState).toPlay : null,
+            tentativeStone: _reviewTryMode
+                ? (_reviewTryState ?? boardState).toPlay
+                : null,
             onTryPlay: (GoPoint p) {
               _reviewTryPendingConfirmTimer.handleTap(
                 p,
@@ -2902,7 +3145,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                       _reviewTryState = next;
                       _reviewHintPoints = <GoPoint>[];
                     });
-                    playStoneSound();
+                    playMoveSounds(state, next);
                   } catch (_) {
                     setState(() {
                       _reviewTryPendingConfirmTimer.cancel();
@@ -3107,7 +3350,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                                 style: const TextStyle(fontSize: 13),
                               ),
                             if (_currentNode!.children.length > 1) ...<Widget>[
-                              if ((_currentNode!.comment ?? '').trim().isNotEmpty)
+                              if ((_currentNode!.comment ?? '')
+                                  .trim()
+                                  .isNotEmpty)
                                 const SizedBox(height: 4),
                               Text(
                                 _t(
@@ -3118,7 +3363,9 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                                 ),
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: Theme.of(context).colorScheme.secondary,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.secondary,
                                 ),
                               ),
                               const SizedBox(height: 2),
@@ -3146,9 +3393,11 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                                           ),
                                           style: TextStyle(
                                             fontSize: 13,
-                                            color: Theme.of(context)
-                                                .colorScheme.primary,
-                                            decoration: TextDecoration.underline,
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
+                                            decoration:
+                                                TextDecoration.underline,
                                           ),
                                         ),
                                       ),
@@ -3157,24 +3406,31 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                                 ),
                               ),
                             ],
-                            if (_winrateNotes[_currentBranchKey]
-                                    ?.containsKey(_currentTurn.toString()) ==
+                            if (_winrateNotes[_currentBranchKey]?.containsKey(
+                                  _currentTurn.toString(),
+                                ) ==
                                 true) ...<Widget>[
-                              if ((_currentNode!.comment ?? '').trim().isNotEmpty ||
+                              if ((_currentNode!.comment ?? '')
+                                      .trim()
+                                      .isNotEmpty ||
                                   _currentNode!.children.length > 1)
                                 const SizedBox(height: 4),
                               Text(
-                                _winrateNotes[_currentBranchKey]![_currentTurn.toString()]!,
+                                _winrateNotes[_currentBranchKey]![_currentTurn
+                                    .toString()]!,
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: Theme.of(context).colorScheme.secondary,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.secondary,
                                 ),
                               ),
                             ],
                             if ((_currentNode!.comment ?? '').trim().isEmpty &&
                                 _currentNode!.children.length <= 1 &&
-                                _winrateNotes[_currentBranchKey]
-                                    ?.containsKey(_currentTurn.toString()) !=
+                                _winrateNotes[_currentBranchKey]?.containsKey(
+                                      _currentTurn.toString(),
+                                    ) !=
                                     true)
                               Text(
                                 '—',
@@ -3200,7 +3456,8 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                 ],
                 if (_winratesByBranch.isNotEmpty &&
                     _winratesByBranch.values.any(
-                        (Map<int, double> m) => m.isNotEmpty)) ...<Widget>[
+                      (Map<int, double> m) => m.isNotEmpty,
+                    )) ...<Widget>[
                   Text(
                     _t(zh: '妙手提示', en: 'Brilliant Moves', ja: '妙手', ko: '묘수'),
                     style: Theme.of(context).textTheme.titleMedium,
@@ -3215,11 +3472,29 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                       ),
                     )
                   else
-                    ...reviewGoodHints.map(Text.new),
+                    ..._hintJumpLines(reviewGoodHints),
                   const SizedBox(height: 8),
-                  Text(
-                    _t(zh: '恶手提示', en: 'Blunders', ja: '悪手', ko: '악수'),
-                    style: Theme.of(context).textTheme.titleMedium,
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          _t(zh: '恶手提示', en: 'Blunders', ja: '悪手', ko: '악수'),
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                      if (reviewBadHints.isNotEmpty)
+                        TextButton(
+                          onPressed: _jumpToWorstBlunder,
+                          child: Text(
+                            _t(
+                              zh: '跳到恶手',
+                              en: 'Jump to blunder',
+                              ja: '悪手へ',
+                              ko: '악수로 이동',
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                   if (reviewBadHints.isEmpty)
                     Text(
@@ -3231,7 +3506,7 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                       ),
                     )
                   else
-                    ...reviewBadHints.map(Text.new),
+                    ..._hintJumpLines(reviewBadHints),
                   const SizedBox(height: 12),
                 ],
                 Row(
@@ -3241,7 +3516,10 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                       OutlinedButton.icon(
                         style: OutlinedButton.styleFrom(
                           visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
                         ),
                         onPressed: _analyzing ? null : _fillWinrates,
                         icon: const Icon(Icons.auto_fix_high, size: 18),
@@ -3259,9 +3537,14 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
                     FilledButton.icon(
                       style: FilledButton.styleFrom(
                         visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
                       ),
-                      onPressed: (_analyzing || _isFillingWinrate) ? null : _analyzeCurrentWinrate,
+                      onPressed: (_analyzing || _isFillingWinrate)
+                          ? null
+                          : _analyzeCurrentWinrate,
                       icon: _analyzing
                           ? const SizedBox(
                               width: 16,
@@ -3303,12 +3586,19 @@ class _RecordReviewPageState extends State<RecordReviewPage> {
             IconButton(
               onPressed: _sgf == null ? null : _shareSgf,
               icon: const Icon(Icons.share, size: 22),
-              tooltip: _t(zh: '分享棋谱', en: 'Share SGF', ja: '棋譜を共有', ko: '기보 공유'),
+              tooltip: _t(
+                zh: '分享棋谱',
+                en: 'Share SGF',
+                ja: '棋譜を共有',
+                ko: '기보 공유',
+              ),
             ),
             TextButton.icon(
               onPressed: _stateAtPath() == null ? null : _openContinuePlay,
               icon: const Icon(Icons.play_arrow, size: 20),
-              label: Text(_t(zh: '续下', en: 'Continue', ja: '続き対局', ko: '계속 대국')),
+              label: Text(
+                _t(zh: '续下', en: 'Continue', ja: '続き対局', ko: '계속 대국'),
+              ),
             ),
           ],
         ),
@@ -3344,6 +3634,7 @@ class _ImportSgfPage extends StatefulWidget {
 
 class _ImportSgfPageState extends State<_ImportSgfPage> {
   final TextEditingController _urlController = TextEditingController();
+  final SgfUrlFetcher _sgfUrlFetcher = SgfUrlFetcher();
   static const SgfParser _sgfParser = SgfParser();
   bool _loading = false;
   String? _status;
@@ -3434,24 +3725,21 @@ class _ImportSgfPageState extends State<_ImportSgfPage> {
       _status = null;
     });
     try {
-      final Uri uri = Uri.parse(url);
-      final http.Response response = await http.get(uri);
-      if (response.statusCode != 200) {
-        throw StateError('HTTP ${response.statusCode}');
-      }
+      final String content = await _sgfUrlFetcher.fetch(url);
       if (!mounted) {
         return;
       }
+      final Uri uri = Uri.parse(url);
       final String fileName = uri.pathSegments.isNotEmpty
           ? uri.pathSegments.last
           : 'downloaded.sgf';
-      final SgfGame parsed = _sgfParser.parse(response.body);
+      final SgfGame parsed = _sgfParser.parse(content);
       final String ruleset = parsed.rules.isEmpty
           ? 'chinese'
           : rulePresetFromString(parsed.rules).id;
       Navigator.of(context).pop(
         _ImportResult(
-          sgf: response.body,
+          sgf: content,
           title: fileName,
           source: 'download',
           ruleset: ruleset,

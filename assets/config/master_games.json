@@ -1,0 +1,2455 @@
+{
+  "version": 2,
+  "source": "Andries Brouwer public-domain archive + tasuki famous games + existing MasterGo set",
+  "categories": [
+    {
+      "id": "ancient",
+      "sort": 1
+    },
+    {
+      "id": "international",
+      "sort": 2
+    },
+    {
+      "id": "classic",
+      "sort": 3
+    },
+    {
+      "id": "ai",
+      "sort": 4
+    }
+  ],
+  "games": [
+    {
+      "id": "famous_1740",
+      "title": "程兰如 vs 施襄夏",
+      "players": "Cheng Lanru(黑) vs Shi Xiangxia(白)",
+      "event": "清中期名局",
+      "year": 1740,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1740.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "danghu_era",
+        "famous"
+      ],
+      "result": "",
+      "moveCount": 307,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1582",
+      "title": "三劫循环之局",
+      "players": "Kashio Rigen(黑) vs Nikkai, 1st Honinbo Sansa(白)",
+      "event": "The game with tripple ko",
+      "year": 1582,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1582.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "famous"
+      ],
+      "result": "Void",
+      "moveCount": 128,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1625",
+      "title": "1st Yasui Santetsu vs 1st Inoue Nakamura Doseki",
+      "players": "1st Yasui Santetsu(黑) vs 1st Inoue Nakamura Doseki(白)",
+      "event": "Famous game",
+      "year": 1625,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1625.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "famous"
+      ],
+      "result": "W+",
+      "moveCount": 112,
+      "illegalMoves": 0
+    },
+    {
+      "id": "dosaku_059",
+      "title": "道策天元开局",
+      "players": "Yasui Santetsu II(黑) vs Honinbo Dosaku(白)",
+      "event": "Castle Game",
+      "year": 1670,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/dosaku_059.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "dosaku",
+        "castle",
+        "tengen"
+      ],
+      "result": "W+9",
+      "moveCount": 244,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1682",
+      "title": "Peichin Hamahika vs Honinbo Dosaku",
+      "players": "Peichin Hamahika(黑) vs Honinbo Dosaku(白)",
+      "event": "Famous game",
+      "year": 1682,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1682.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "famous"
+      ],
+      "result": "W+14",
+      "moveCount": 241,
+      "illegalMoves": 0
+    },
+    {
+      "id": "dosaku_122",
+      "title": "道策一生杰作",
+      "players": "Yasui Shunchi(黑) vs Honinbo Dosaku(白)",
+      "event": "Castle Game",
+      "year": 1684,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/dosaku_122.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "dosaku",
+        "castle"
+      ],
+      "result": "B+1",
+      "moveCount": 277,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1705",
+      "title": "Dochi's famous endgame tesuji",
+      "players": "Honinbo Dochi(黑) vs Yasui Senkaku(白)",
+      "event": "Dochi's famous endgame tesuji",
+      "year": 1705,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1705.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "famous"
+      ],
+      "result": "B+1",
+      "moveCount": 281,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ancient_old_chinese_dh10",
+      "title": "当湖十局 第10局",
+      "players": "Shi Dingan(黑) vs Fan Xiping(白)",
+      "event": "Dang Hu Games",
+      "year": 1739,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/ancient_old_chinese_dh10.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "danghu"
+      ],
+      "result": "B+5",
+      "moveCount": 341,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ancient_old_chinese_dh01",
+      "title": "当湖十局 第1局",
+      "players": "Fan Xiping(黑) vs Shi Dingan(白)",
+      "event": "Dang Hu Games",
+      "year": 1739,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/ancient_old_chinese_dh01.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "danghu"
+      ],
+      "result": "B+14",
+      "moveCount": 260,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ancient_old_chinese_dh02",
+      "title": "当湖十局 第2局",
+      "players": "Shi Dingan(黑) vs Fan Xiping(白)",
+      "event": "Dang Hu Games",
+      "year": 1739,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/ancient_old_chinese_dh02.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "danghu"
+      ],
+      "result": "B+31",
+      "moveCount": 290,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ancient_old_chinese_dh03",
+      "title": "当湖十局 第3局",
+      "players": "Fan Xiping(黑) vs Shi Dingan(白)",
+      "event": "Dang Hu Games",
+      "year": 1739,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/ancient_old_chinese_dh03.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "danghu"
+      ],
+      "result": "B+28",
+      "moveCount": 232,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ancient_old_chinese_dh04",
+      "title": "当湖十局 第4局",
+      "players": "Shi Dingan(黑) vs Fan Xiping(白)",
+      "event": "Dang Hu Games",
+      "year": 1739,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/ancient_old_chinese_dh04.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "danghu"
+      ],
+      "result": "W+15",
+      "moveCount": 270,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ancient_old_chinese_dh05",
+      "title": "当湖十局 第5局",
+      "players": "Shi Dingan(黑) vs Fan Xiping(白)",
+      "event": "Dang Hu Games",
+      "year": 1739,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/ancient_old_chinese_dh05.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "danghu"
+      ],
+      "result": "W+29",
+      "moveCount": 287,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ancient_old_chinese_dh06",
+      "title": "当湖十局 第6局",
+      "players": "Shi Dingan(黑) vs Fan Xiping(白)",
+      "event": "Dang Hu Games",
+      "year": 1739,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/ancient_old_chinese_dh06.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "danghu"
+      ],
+      "result": "B+19",
+      "moveCount": 317,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ancient_old_chinese_dh07",
+      "title": "当湖十局 第7局",
+      "players": "Shi Dingan(黑) vs Fan Xiping(白)",
+      "event": "Dang Hu Games",
+      "year": 1739,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/ancient_old_chinese_dh07.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "danghu"
+      ],
+      "result": "W+5",
+      "moveCount": 298,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ancient_old_chinese_dh08",
+      "title": "当湖十局 第8局",
+      "players": "Shi Dingan(黑) vs Fan Xiping(白)",
+      "event": "Dang Hu Games",
+      "year": 1739,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/ancient_old_chinese_dh08.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "danghu"
+      ],
+      "result": "W+13",
+      "moveCount": 223,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ancient_old_chinese_dh09",
+      "title": "当湖十局 第9局",
+      "players": "Fan Xiping(黑) vs Shi Dingan(白)",
+      "event": "Dang Hu Games",
+      "year": 1739,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/ancient_old_chinese_dh09.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "danghu"
+      ],
+      "result": "W+9",
+      "moveCount": 251,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1792",
+      "title": "Honinbo Retsugen vs Yasui Senchi Senkaku",
+      "players": "Honinbo Retsugen(黑) vs Yasui Senchi Senkaku(白)",
+      "event": "Famous game",
+      "year": 1792,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1792.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "famous"
+      ],
+      "result": "W+R",
+      "moveCount": 184,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1812",
+      "title": "Nakano Chitoku (Yasui Senchi) vs Honinbo Genjo",
+      "players": "Nakano Chitoku (Yasui Senchi)(黑) vs Honinbo Genjo(白)",
+      "event": "Famous game",
+      "year": 1812,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1812.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "famous"
+      ],
+      "result": "B+R",
+      "moveCount": 155,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1815",
+      "title": "Hattori Rittetsu (Gennan Inseki) vs Honinbo Jowa",
+      "players": "Hattori Rittetsu (Gennan Inseki)(黑) vs Honinbo Jowa(白)",
+      "event": "Famous game",
+      "year": 1815,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1815.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "famous"
+      ],
+      "result": "B+4",
+      "moveCount": 223,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1820",
+      "title": "Honinbo Jowa vs Yasui Senchi",
+      "players": "Honinbo Jowa(黑) vs Yasui Senchi(白)",
+      "event": "Famous game",
+      "year": 1820,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1820.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "famous"
+      ],
+      "result": "B+2",
+      "moveCount": 259,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ancient_honinbo_jowa_276",
+      "title": "吐血之局",
+      "players": "Akaboshi Intetsu(黑) vs Honinbo Jowa(白)",
+      "event": "Blood-vomiting game",
+      "year": 1835,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/ancient_honinbo_jowa_276.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "jowa",
+        "blood_vomiting"
+      ],
+      "result": "W+R",
+      "moveCount": 246,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1842",
+      "title": "Honinbo Shuwa vs Inoue Genan Inseki",
+      "players": "Honinbo Shuwa(黑) vs Inoue Genan Inseki(白)",
+      "event": "Famous game",
+      "year": 1842,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1842.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "famous"
+      ],
+      "result": "B+6",
+      "moveCount": 270,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1844",
+      "title": "Yasui Sanchi vs Honinbo Shuwa",
+      "players": "Yasui Sanchi(黑) vs Honinbo Shuwa(白)",
+      "event": "Castle Game",
+      "year": 1844,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1844.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "famous"
+      ],
+      "result": "B+1",
+      "moveCount": 239,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1846",
+      "title": "耳赤之局",
+      "players": "Kuwahara Shusaku(黑) vs Gennan Inseki(白)",
+      "event": "Ear-redding game",
+      "year": 1846,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1846.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "famous"
+      ],
+      "result": "B+3",
+      "moveCount": 325,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1851",
+      "title": "Honinbo Shusaku vs Honinbo Shuwa",
+      "players": "Honinbo Shusaku(黑) vs Honinbo Shuwa(白)",
+      "event": "Famous game",
+      "year": 1851,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1851.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "famous"
+      ],
+      "result": "B+4",
+      "moveCount": 227,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1852",
+      "title": "Ito Showa vs Honinbo Shusaku",
+      "players": "Ito Showa(黑) vs Honinbo Shusaku(白)",
+      "event": "Famous game",
+      "year": 1851,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1852.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "famous"
+      ],
+      "result": "W+R",
+      "moveCount": 154,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1853",
+      "title": "Ota Yuzo vs Honinbo Shusaku",
+      "players": "Ota Yuzo(黑) vs Honinbo Shusaku(白)",
+      "event": "Famous game",
+      "year": 1853,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1853.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "famous"
+      ],
+      "result": "W+3",
+      "moveCount": 228,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1895",
+      "title": "Tamura Hoju (Shusai) vs Honinbo Shuei",
+      "players": "Tamura Hoju (Shusai)(黑) vs Honinbo Shuei(白)",
+      "event": "Famous game",
+      "year": 1895,
+      "boardSize": 19,
+      "ruleset": "classical",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1895.sgf",
+      "category": "ancient",
+      "tags": [
+        "ancient",
+        "famous"
+      ],
+      "result": "W+2",
+      "moveCount": 228,
+      "illegalMoves": 0
+    },
+    {
+      "id": "nie_jiato_tengen_1985",
+      "title": "中日擂台赛 聂卫平 vs 加藤正夫",
+      "players": "加藤正夫(黑) vs 聂卫平(白)",
+      "event": "第1届中日围棋擂台赛",
+      "year": 1985,
+      "boardSize": 19,
+      "ruleset": "japanese",
+      "komi": 5.5,
+      "sgfAssetPath": "assets/master_games/nie_jiato_tengen_1985.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "builtin",
+        "china_japan_supergo"
+      ],
+      "result": "W+4.5",
+      "moveCount": 250,
+      "illegalMoves": 0
+    },
+    {
+      "id": "nie_xiaolin_tengen_1985",
+      "title": "中日擂台赛 聂卫平 vs 小林光一",
+      "players": "小林光一(黑) vs 聂卫平(白)",
+      "event": "第1届中日围棋擂台赛",
+      "year": 1985,
+      "boardSize": 19,
+      "ruleset": "japanese",
+      "komi": 5.5,
+      "sgfAssetPath": "assets/master_games/nie_xiaolin_tengen_1985.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "builtin",
+        "china_japan_supergo"
+      ],
+      "result": "B+2.5",
+      "moveCount": 272,
+      "illegalMoves": 0
+    },
+    {
+      "id": "nie_fujisawa_tengen_1985",
+      "title": "中日擂台赛 聂卫平 vs 藤泽秀行 主将战",
+      "players": "聂卫平(黑) vs 藤泽秀行(白)",
+      "event": "第1届中日围棋擂台赛",
+      "year": 1985,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 5.5,
+      "sgfAssetPath": "assets/master_games/nie_fujisawa_tengen_1985.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "builtin",
+        "china_japan_supergo"
+      ],
+      "result": "B+3.5",
+      "moveCount": 245,
+      "illegalMoves": 0
+    },
+    {
+      "id": "fujitsu_01_15",
+      "title": "Takemiya Masaki vs Rin Kaiho",
+      "players": "Takemiya Masaki(黑) vs Rin Kaiho(白)",
+      "event": "1st Fujitsu Cup",
+      "year": 1988,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 5.5,
+      "sgfAssetPath": "assets/master_games/fujitsu_01_15.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "fujitsu_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 165,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ing_01_18",
+      "title": "Cho Hunhyun vs Nie Weiping",
+      "players": "Cho Hunhyun(黑) vs Nie Weiping(白)",
+      "event": "1st Ing Cup",
+      "year": 1989,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 8.0,
+      "sgfAssetPath": "assets/master_games/ing_01_18.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "ing_cup"
+      ],
+      "result": "W+9",
+      "moveCount": 245,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ing_01_21",
+      "title": "Cho Hunhyun vs Nie Weiping",
+      "players": "Cho Hunhyun(黑) vs Nie Weiping(白)",
+      "event": "1st Ing Cup",
+      "year": 1989,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 8.0,
+      "sgfAssetPath": "assets/master_games/ing_01_21.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "ing_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 145,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ing_01_20",
+      "title": "Cho Hunhyun vs Nie Weiping",
+      "players": "Cho Hunhyun(黑) vs Nie Weiping(白)",
+      "event": "1st Ing Cup",
+      "year": 1989,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 8.0,
+      "sgfAssetPath": "assets/master_games/ing_01_20.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "ing_cup"
+      ],
+      "result": "B+1",
+      "moveCount": 318,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ing_01_19",
+      "title": "Nie Weiping vs Cho Hunhyun",
+      "players": "Nie Weiping(黑) vs Cho Hunhyun(白)",
+      "event": "1st Ing Cup",
+      "year": 1989,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 8.0,
+      "sgfAssetPath": "assets/master_games/ing_01_19.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "ing_cup"
+      ],
+      "result": "B+3",
+      "moveCount": 247,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ing_01_17",
+      "title": "Nie Weiping vs Cho Hunhyun",
+      "players": "Nie Weiping(黑) vs Cho Hunhyun(白)",
+      "event": "1st Ing Cup",
+      "year": 1989,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 8.0,
+      "sgfAssetPath": "assets/master_games/ing_01_17.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "ing_cup"
+      ],
+      "result": "W+3",
+      "moveCount": 240,
+      "illegalMoves": 0
+    },
+    {
+      "id": "asiantv_01_f",
+      "title": "Takemiya Masaki vs Kobayashi Satoru",
+      "players": "Takemiya Masaki(黑) vs Kobayashi Satoru(白)",
+      "event": "1st Asian TV Cup",
+      "year": 1989,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 5.5,
+      "sgfAssetPath": "assets/master_games/asiantv_01_f.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "asian_tv_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 179,
+      "illegalMoves": 0
+    },
+    {
+      "id": "samsung_01_f2",
+      "title": "Yoda Norimoto vs Yoo Changhyuk",
+      "players": "Yoda Norimoto(黑) vs Yoo Changhyuk(白)",
+      "event": "1st Samsung Cup Final",
+      "year": 1996,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 5.5,
+      "sgfAssetPath": "assets/master_games/samsung_01_f2.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "samsung_cup"
+      ],
+      "result": "B+1.5",
+      "moveCount": 264,
+      "illegalMoves": 0
+    },
+    {
+      "id": "samsung_01_f3",
+      "title": "Yoo Changhyuk vs Yoda Norimoto",
+      "players": "Yoo Changhyuk(黑) vs Yoda Norimoto(白)",
+      "event": "1st Samsung Cup Final",
+      "year": 1996,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 5.5,
+      "sgfAssetPath": "assets/master_games/samsung_01_f3.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "samsung_cup"
+      ],
+      "result": "W+1.5",
+      "moveCount": 296,
+      "illegalMoves": 0
+    },
+    {
+      "id": "samsung_01_f1",
+      "title": "Yoo Changhyuk vs Yoda Norimoto",
+      "players": "Yoo Changhyuk(黑) vs Yoda Norimoto(白)",
+      "event": "1st Samsung Cup Final",
+      "year": 1996,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 5.5,
+      "sgfAssetPath": "assets/master_games/samsung_01_f1.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "samsung_cup"
+      ],
+      "result": "B+0.5",
+      "moveCount": 196,
+      "illegalMoves": 0
+    },
+    {
+      "id": "lg_01_f1",
+      "title": "Lee Changho vs Yoo Changhyuk",
+      "players": "Lee Changho(黑) vs Yoo Changhyuk(白)",
+      "event": "1st LG Cup Final",
+      "year": 1997,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 5.5,
+      "sgfAssetPath": "assets/master_games/lg_01_f1.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "lg_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 157,
+      "illegalMoves": 0
+    },
+    {
+      "id": "lg_01_f3",
+      "title": "Lee Changho vs Yoo Changhyuk",
+      "players": "Lee Changho(黑) vs Yoo Changhyuk(白)",
+      "event": "1st LG Cup Final",
+      "year": 1997,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 5.5,
+      "sgfAssetPath": "assets/master_games/lg_01_f3.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "lg_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 193,
+      "illegalMoves": 0
+    },
+    {
+      "id": "lg_01_f2",
+      "title": "Yoo Changhyuk vs Lee Changho",
+      "players": "Yoo Changhyuk(黑) vs Lee Changho(白)",
+      "event": "1st LG Cup Final",
+      "year": 1997,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 5.5,
+      "sgfAssetPath": "assets/master_games/lg_01_f2.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "lg_cup"
+      ],
+      "result": "W+3.5",
+      "moveCount": 234,
+      "illegalMoves": 0
+    },
+    {
+      "id": "chunlan_01_f2",
+      "title": "Cho Hunhyun vs Lee Changho",
+      "players": "Cho Hunhyun(黑) vs Lee Changho(白)",
+      "event": "1st Chunlan Cup Final",
+      "year": 1999,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 5.5,
+      "sgfAssetPath": "assets/master_games/chunlan_01_f2.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "chunlan_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 146,
+      "illegalMoves": 0
+    },
+    {
+      "id": "chunlan_01_f1",
+      "title": "Lee Changho vs Cho Hunhyun",
+      "players": "Lee Changho(黑) vs Cho Hunhyun(白)",
+      "event": "1st Chunlan Cup Final",
+      "year": 1999,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 5.5,
+      "sgfAssetPath": "assets/master_games/chunlan_01_f1.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "chunlan_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 168,
+      "illegalMoves": 0
+    },
+    {
+      "id": "chunlan_01_f3",
+      "title": "Lee Changho vs Cho Hunhyun",
+      "players": "Lee Changho(黑) vs Cho Hunhyun(白)",
+      "event": "1st Chunlan Cup Final",
+      "year": 1999,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 5.5,
+      "sgfAssetPath": "assets/master_games/chunlan_01_f3.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "chunlan_cup"
+      ],
+      "result": "W+2.5",
+      "moveCount": 285,
+      "illegalMoves": 0
+    },
+    {
+      "id": "toyota_01_f1",
+      "title": "Lee Changho vs Chang Hao",
+      "players": "Lee Changho(黑) vs Chang Hao(白)",
+      "event": "1st Toyota Cup Final",
+      "year": 2003,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 5.5,
+      "sgfAssetPath": "assets/master_games/toyota_01_f1.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "toyota_denso_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 175,
+      "illegalMoves": 0
+    },
+    {
+      "id": "asiantv_15_f",
+      "title": "Mimura Tomoyasu vs Zhou Heyang",
+      "players": "Mimura Tomoyasu(黑) vs Zhou Heyang(白)",
+      "event": "15th Asian TV Cup",
+      "year": 2003,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/asiantv_15_f.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "asian_tv_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 194,
+      "illegalMoves": 0
+    },
+    {
+      "id": "samsung10_luo_choi_g3",
+      "title": "三星杯半决赛 罗洗河 vs 崔哲瀚 决胜局（弃三劫循环）",
+      "players": "崔哲瀚(黑) vs 罗洗河(白)",
+      "event": "第10届三星杯世界围棋公开赛 半决赛",
+      "year": 2005,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/samsung10_luo_choi_g3.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "builtin",
+        "samsung_cup"
+      ],
+      "result": "W+7.5",
+      "moveCount": 293,
+      "illegalMoves": 0
+    },
+    {
+      "id": "samsung10_luo_lee_g1",
+      "title": "第10届三星杯决赛 罗洗河 vs 李昌镐 第1局",
+      "players": "罗洗河(黑) vs 李昌镐(白)",
+      "event": "第10届三星杯世界围棋公开赛 决赛",
+      "year": 2005,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/samsung10_luo_lee_g1.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "builtin",
+        "samsung_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 263,
+      "illegalMoves": 0
+    },
+    {
+      "id": "samsung10_luo_lee_g2",
+      "title": "第10届三星杯决赛 罗洗河 vs 李昌镐 第2局",
+      "players": "罗洗河(黑) vs 李昌镐(白)",
+      "event": "第10届三星杯世界围棋公开赛 决赛",
+      "year": 2005,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/samsung10_luo_lee_g2.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "builtin",
+        "samsung_cup"
+      ],
+      "result": "B+3.5",
+      "moveCount": 335,
+      "illegalMoves": 0
+    },
+    {
+      "id": "samsung10_luo_lee_g3",
+      "title": "第10届三星杯决赛 罗洗河 vs 李昌镐 第3局",
+      "players": "罗洗河(黑) vs 李昌镐(白)",
+      "event": "第10届三星杯世界围棋公开赛 决赛",
+      "year": 2005,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/samsung10_luo_lee_g3.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "builtin",
+        "samsung_cup"
+      ],
+      "result": "B+5.5",
+      "moveCount": 360,
+      "illegalMoves": 0
+    },
+    {
+      "id": "toyota_03_f3",
+      "title": "Cho U vs Lee Sedol",
+      "players": "Cho U(黑) vs Lee Sedol(白)",
+      "event": "3rd Toyota Cup Final",
+      "year": 2007,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/toyota_03_f3.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "toyota_denso_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 188,
+      "illegalMoves": 0
+    },
+    {
+      "id": "toyota_03_f2",
+      "title": "Cho U vs Lee Sedol",
+      "players": "Cho U(黑) vs Lee Sedol(白)",
+      "event": "3rd Toyota Cup Final",
+      "year": 2007,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/toyota_03_f2.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "toyota_denso_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 180,
+      "illegalMoves": 0
+    },
+    {
+      "id": "toyota_03_f1",
+      "title": "Lee Sedol vs Cho U",
+      "players": "Lee Sedol(黑) vs Cho U(白)",
+      "event": "3rd Toyota Cup Final",
+      "year": 2007,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/toyota_03_f1.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "toyota_denso_cup"
+      ],
+      "result": "W+0.5",
+      "moveCount": 302,
+      "illegalMoves": 0
+    },
+    {
+      "id": "lg_15_f2",
+      "title": "Kong Jie vs Piao Wenyao",
+      "players": "Kong Jie(黑) vs Piao Wenyao(白)",
+      "event": "15th LG Cup Final",
+      "year": 2011,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/lg_15_f2.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "lg_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 140,
+      "illegalMoves": 0
+    },
+    {
+      "id": "chunlan_08_f1",
+      "title": "Lee Sedol vs Xie He",
+      "players": "Lee Sedol(黑) vs Xie He(白)",
+      "event": "8th Chunlan Cup Final",
+      "year": 2011,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/chunlan_08_f1.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "chunlan_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 169,
+      "illegalMoves": 0
+    },
+    {
+      "id": "lg_15_f1",
+      "title": "Piao Wenyao vs Kong Jie",
+      "players": "Piao Wenyao(黑) vs Kong Jie(白)",
+      "event": "15th LG Cup Final",
+      "year": 2011,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/lg_15_f1.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "lg_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 123,
+      "illegalMoves": 0
+    },
+    {
+      "id": "chunlan_08_f2",
+      "title": "Xie He vs Lee Sedol",
+      "players": "Xie He(黑) vs Lee Sedol(白)",
+      "event": "8th Chunlan Cup Final",
+      "year": 2011,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/chunlan_08_f2.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "chunlan_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 195,
+      "illegalMoves": 0
+    },
+    {
+      "id": "chunlan_08_f3",
+      "title": "Xie He vs Lee Sedol",
+      "players": "Xie He(黑) vs Lee Sedol(白)",
+      "event": "8th Chunlan Cup Final",
+      "year": 2011,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/chunlan_08_f3.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "chunlan_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 214,
+      "illegalMoves": 0
+    },
+    {
+      "id": "fujitsu_24_f01",
+      "title": "Yuki Satoshi vs Sakai Hideyuki",
+      "players": "Yuki Satoshi(黑) vs Sakai Hideyuki(白)",
+      "event": "24th Fujitsu Go Festival",
+      "year": 2011,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/fujitsu_24_f01.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "fujitsu_cup"
+      ],
+      "result": "W+0.5",
+      "moveCount": 202,
+      "illegalMoves": 0
+    },
+    {
+      "id": "mlily_01_f3",
+      "title": "Gu Li vs Mi Yuting",
+      "players": "Gu Li(黑) vs Mi Yuting(白)",
+      "event": "1st Mlily Cup",
+      "year": 2013,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/mlily_01_f3.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "mlily_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 202,
+      "illegalMoves": 0
+    },
+    {
+      "id": "mlily_01_f1",
+      "title": "Gu Li vs Mi Yuting",
+      "players": "Gu Li(黑) vs Mi Yuting(白)",
+      "event": "1st Mlily Cup",
+      "year": 2013,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/mlily_01_f1.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "mlily_cup"
+      ],
+      "result": "B+1.5",
+      "moveCount": 275,
+      "illegalMoves": 0
+    },
+    {
+      "id": "samsung_18_f2",
+      "title": "Lee Sedol vs Tang Weixing",
+      "players": "Lee Sedol(黑) vs Tang Weixing(白)",
+      "event": "18th Samsung Cup Final",
+      "year": 2013,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/samsung_18_f2.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "samsung_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 274,
+      "illegalMoves": 0
+    },
+    {
+      "id": "mlily_01_f4",
+      "title": "Mi Yuting vs Gu Li",
+      "players": "Mi Yuting(黑) vs Gu Li(白)",
+      "event": "1st Mlily Cup",
+      "year": 2013,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/mlily_01_f4.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "mlily_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 187,
+      "illegalMoves": 0
+    },
+    {
+      "id": "mlily_01_f2",
+      "title": "Mi Yuting vs Gu Li",
+      "players": "Mi Yuting(黑) vs Gu Li(白)",
+      "event": "1st Mlily Cup",
+      "year": 2013,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/mlily_01_f2.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "mlily_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 237,
+      "illegalMoves": 0
+    },
+    {
+      "id": "samsung_18_f1",
+      "title": "Tang Weixing vs Lee Sedol",
+      "players": "Tang Weixing(黑) vs Lee Sedol(白)",
+      "event": "18th Samsung Cup Final",
+      "year": 2013,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/samsung_18_f1.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "samsung_cup"
+      ],
+      "result": "B+0.5",
+      "moveCount": 304,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ing_08_34",
+      "title": "Park Junghwan vs Tang Weixing",
+      "players": "Park Junghwan(黑) vs Tang Weixing(白)",
+      "event": "8th Ing Cup",
+      "year": 2016,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 12.0,
+      "sgfAssetPath": "assets/master_games/ing_08_34.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "ing_cup"
+      ],
+      "result": "W+3",
+      "moveCount": 282,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ing_08_36",
+      "title": "Park Junghwan vs Tang Weixing",
+      "players": "Park Junghwan(黑) vs Tang Weixing(白)",
+      "event": "8th Ing Cup",
+      "year": 2016,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.0,
+      "sgfAssetPath": "assets/master_games/ing_08_36.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "ing_cup"
+      ],
+      "result": "W+11",
+      "moveCount": 319,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ing_08_37",
+      "title": "Tang Weixing vs Park Junghwan",
+      "players": "Tang Weixing(黑) vs Park Junghwan(白)",
+      "event": "8th Ing Cup",
+      "year": 2016,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 8.0,
+      "sgfAssetPath": "assets/master_games/ing_08_37.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "ing_cup"
+      ],
+      "result": "B+5",
+      "moveCount": 313,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ing_08_35",
+      "title": "Tang Weixing vs Park Junghwan",
+      "players": "Tang Weixing(黑) vs Park Junghwan(白)",
+      "event": "8th Ing Cup",
+      "year": 2016,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 8.0,
+      "sgfAssetPath": "assets/master_games/ing_08_35.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "ing_cup"
+      ],
+      "result": "W+8",
+      "moveCount": 305,
+      "illegalMoves": 0
+    },
+    {
+      "id": "ing_08_33",
+      "title": "Tang Weixing vs Park Junghwan",
+      "players": "Tang Weixing(黑) vs Park Junghwan(白)",
+      "event": "8th Ing Cup",
+      "year": 2016,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 8.0,
+      "sgfAssetPath": "assets/master_games/ing_08_33.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "ing_cup"
+      ],
+      "result": "W+3",
+      "moveCount": 286,
+      "illegalMoves": 0
+    },
+    {
+      "id": "asiantv_31_f",
+      "title": "Ding Hao vs Shin Jinseo",
+      "players": "Ding Hao(黑) vs Shin Jinseo(白)",
+      "event": "31st Asian TV Cup",
+      "year": 2019,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/asiantv_31_f.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "asian_tv_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 276,
+      "illegalMoves": 0
+    },
+    {
+      "id": "lg_25_f2",
+      "title": "Ke Jie vs Shin Minjun",
+      "players": "Ke Jie(黑) vs Shin Minjun(白)",
+      "event": "25th LG Cup Final",
+      "year": 2021,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/lg_25_f2.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "lg_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 198,
+      "illegalMoves": 0
+    },
+    {
+      "id": "lg_25_f3",
+      "title": "Ke Jie vs Shin Minjun",
+      "players": "Ke Jie(黑) vs Shin Minjun(白)",
+      "event": "25th LG Cup Final",
+      "year": 2021,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/lg_25_f3.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "lg_cup"
+      ],
+      "result": "W+3.5",
+      "moveCount": 302,
+      "illegalMoves": 0
+    },
+    {
+      "id": "mlily_04_f4",
+      "title": "Mi Yuting vs Xie Ke",
+      "players": "Mi Yuting(黑) vs Xie Ke(白)",
+      "event": "4th Mlily Cup",
+      "year": 2021,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/mlily_04_f4.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "mlily_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 206,
+      "illegalMoves": 0
+    },
+    {
+      "id": "mlily_04_f2",
+      "title": "Mi Yuting vs Xie Ke",
+      "players": "Mi Yuting(黑) vs Xie Ke(白)",
+      "event": "4th Mlily Cup",
+      "year": 2021,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/mlily_04_f2.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "mlily_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 248,
+      "illegalMoves": 0
+    },
+    {
+      "id": "lg_25_f1",
+      "title": "Shin Minjun vs Ke Jie",
+      "players": "Shin Minjun(黑) vs Ke Jie(白)",
+      "event": "25th LG Cup Final",
+      "year": 2021,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/lg_25_f1.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "lg_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 184,
+      "illegalMoves": 0
+    },
+    {
+      "id": "mlily_04_f3",
+      "title": "Xie Ke vs Mi Yuting",
+      "players": "Xie Ke(黑) vs Mi Yuting(白)",
+      "event": "4th Mlily Cup",
+      "year": 2021,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/mlily_04_f3.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "mlily_cup"
+      ],
+      "result": "W+2.5",
+      "moveCount": 270,
+      "illegalMoves": 0
+    },
+    {
+      "id": "mlily_04_f5",
+      "title": "Xie Ke vs Mi Yuting",
+      "players": "Xie Ke(黑) vs Mi Yuting(白)",
+      "event": "4th Mlily Cup",
+      "year": 2021,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/mlily_04_f5.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "mlily_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 298,
+      "illegalMoves": 0
+    },
+    {
+      "id": "mlily_04_f1",
+      "title": "Xie Ke vs Mi Yuting",
+      "players": "Xie Ke(黑) vs Mi Yuting(白)",
+      "event": "4th Mlily Cup",
+      "year": 2021,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/mlily_04_f1.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "mlily_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 260,
+      "illegalMoves": 0
+    },
+    {
+      "id": "chunlan_14_f1",
+      "title": "Byun Sangil vs Li Xuanhao",
+      "players": "Byun Sangil(黑) vs Li Xuanhao(白)",
+      "event": "14th Chunlan Cup Final",
+      "year": 2023,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/chunlan_14_f1.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "chunlan_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 219,
+      "illegalMoves": 0
+    },
+    {
+      "id": "samsung_28_f1",
+      "title": "Ding Hao vs Xie Erhao",
+      "players": "Ding Hao(黑) vs Xie Erhao(白)",
+      "event": "28th Samsung Cup",
+      "year": 2023,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/samsung_28_f1.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "samsung_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 187,
+      "illegalMoves": 0
+    },
+    {
+      "id": "samsung_28_f3",
+      "title": "Ding Hao vs Xie Erhao",
+      "players": "Ding Hao(黑) vs Xie Erhao(白)",
+      "event": "28th Samsung Cup",
+      "year": 2023,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/samsung_28_f3.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "samsung_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 300,
+      "illegalMoves": 0
+    },
+    {
+      "id": "chunlan_14_f2",
+      "title": "Li Xuanhao vs Byun Sangil",
+      "players": "Li Xuanhao(黑) vs Byun Sangil(白)",
+      "event": "14th Chunlan Cup Final",
+      "year": 2023,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/chunlan_14_f2.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "chunlan_cup"
+      ],
+      "result": "W+R",
+      "moveCount": 212,
+      "illegalMoves": 0
+    },
+    {
+      "id": "samsung_28_f2",
+      "title": "Xie Erhao vs Ding Hao",
+      "players": "Xie Erhao(黑) vs Ding Hao(白)",
+      "event": "28th Samsung Cup",
+      "year": 2023,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/samsung_28_f2.sgf",
+      "category": "international",
+      "tags": [
+        "international",
+        "samsung_cup"
+      ],
+      "result": "B+R",
+      "moveCount": 227,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1926",
+      "title": "Kiseisha vs. Nihon Ki-in",
+      "players": "Karigane Junichi(黑) vs Honinbo Shusai(白)",
+      "event": "Kiseisha vs. Nihon Ki-in",
+      "year": 1926,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/famous_1926.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "famous"
+      ],
+      "result": "W+T",
+      "moveCount": 254,
+      "illegalMoves": 0
+    },
+    {
+      "id": "go_seigen_shusai_1928",
+      "title": "吴清源 vs 本因坊秀哉",
+      "players": "吴清源(黑) vs 本因坊秀哉(白)",
+      "event": "时事新报赞助 日本棋院",
+      "year": 1928,
+      "boardSize": 19,
+      "ruleset": "japanese",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/go_seigen_shusai_1928.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "builtin",
+        "go_seigen"
+      ],
+      "result": "B+4",
+      "moveCount": 223,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1929",
+      "title": "Go Seigen vs Kitani Minoru",
+      "players": "Go Seigen(黑) vs Kitani Minoru(白)",
+      "event": "Famous game",
+      "year": 1929,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/famous_1929.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "famous"
+      ],
+      "result": "W+3",
+      "moveCount": 282,
+      "illegalMoves": 0
+    },
+    {
+      "id": "go_seigen_shusai_1930",
+      "title": "吴清源 vs 本因坊秀哉 让三子",
+      "players": "吴清源(黑) vs 本因坊秀哉(白)",
+      "event": "名人对抗",
+      "year": 1930,
+      "boardSize": 19,
+      "ruleset": "japanese",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/go_seigen_shusai_1930.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "builtin",
+        "go_seigen"
+      ],
+      "result": "B+11",
+      "moveCount": 249,
+      "illegalMoves": 0
+    },
+    {
+      "id": "go_seigen_shusai_1932",
+      "title": "吴清源 vs 本因坊秀哉 四段对名人",
+      "players": "吴清源(黑) vs 本因坊秀哉(白)",
+      "event": "国民新闻赞助 本因坊名人战",
+      "year": 1932,
+      "boardSize": 19,
+      "ruleset": "japanese",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/go_seigen_shusai_1932.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "builtin",
+        "go_seigen"
+      ],
+      "result": "B+R",
+      "moveCount": 160,
+      "illegalMoves": 0
+    },
+    {
+      "id": "go_seigen_honinbo_1933",
+      "title": "吴清源 vs 本因坊秀哉 星·三三·天元之局",
+      "players": "吴清源(黑) vs 本因坊秀哉(白)",
+      "event": "日本棋院 vs 读卖新闻 选拔战",
+      "year": 1933,
+      "boardSize": 19,
+      "ruleset": "japanese",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/go_seigen_honinbo_1933.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "builtin",
+        "go_seigen"
+      ],
+      "result": "W+2",
+      "moveCount": 252,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1933",
+      "title": "吴清源 十六士",
+      "players": "Kosugi Tei(黑) vs Go Seigen(白)",
+      "event": "Sixteen soldiers",
+      "year": 1933,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/famous_1933.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "famous"
+      ],
+      "result": "W+R",
+      "moveCount": 156,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1938",
+      "title": "Kitani Minoru vs Honinbo Shusai",
+      "players": "Kitani Minoru(黑) vs Honinbo Shusai(白)",
+      "event": "Famous game",
+      "year": 1938,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/famous_1938.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "famous"
+      ],
+      "result": "",
+      "moveCount": 237,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1939",
+      "title": "镰仓十番棋",
+      "players": "Kitani Minoru(黑) vs Go Seigen(白)",
+      "event": "Kamakura jubango",
+      "year": 1939,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/famous_1939.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "famous"
+      ],
+      "result": "W+2",
+      "moveCount": 276,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1945",
+      "title": "原爆下的对局",
+      "players": "Iwamoto Kaoru(黑) vs Hashimoto Utaro(白)",
+      "event": "Famous game",
+      "year": 1945,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1945.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "famous"
+      ],
+      "result": "W+5",
+      "moveCount": 240,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1948",
+      "title": "Iwamoto Kaoru vs Go Seigen",
+      "players": "Iwamoto Kaoru(黑) vs Go Seigen(白)",
+      "event": "Famous game",
+      "year": 1948,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/famous_1948.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "famous"
+      ],
+      "result": "W+1",
+      "moveCount": 328,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1951",
+      "title": "Fujisawa Hosai vs Go Seigen",
+      "players": "Fujisawa Hosai(黑) vs Go Seigen(白)",
+      "event": "Game 1 of a ten-game match sponsored by the Yomiuri Shinbun.",
+      "year": 1951,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/famous_1951.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "famous"
+      ],
+      "result": "W+R",
+      "moveCount": 94,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1957a",
+      "title": "Go Seigen vs Kaku Takagawa",
+      "players": "Go Seigen(黑) vs Kaku Takagawa(白)",
+      "event": "1st Japan's Strongest Deciding Match",
+      "year": 1957,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 0.0,
+      "sgfAssetPath": "assets/master_games/famous_1957a.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "famous"
+      ],
+      "result": "B+resign",
+      "moveCount": 152,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1957",
+      "title": "Kitani Minoru vs Go Seigen [Wu]",
+      "players": "Kitani Minoru(黑) vs Go Seigen [Wu](白)",
+      "event": "The 1st Japan Strongest Deciding Matches",
+      "year": 1957,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/famous_1957.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "famous"
+      ],
+      "result": "W+R",
+      "moveCount": 165,
+      "illegalMoves": 0
+    },
+    {
+      "id": "famous_1959",
+      "title": "Takagawa Taku vs Go Seigen",
+      "players": "Takagawa Taku(黑) vs Go Seigen(白)",
+      "event": "Go Seigen versus Honinbo",
+      "year": 1959,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 4.5,
+      "sgfAssetPath": "assets/master_games/famous_1959.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "famous"
+      ],
+      "result": "B+0.5",
+      "moveCount": 268,
+      "illegalMoves": 1
+    },
+    {
+      "id": "famous_2003",
+      "title": "Lee Sedol vs Hong Jansik",
+      "players": "Lee Sedol(黑) vs Hong Jansik(白)",
+      "event": "3rd Korean KAT Cup",
+      "year": 2003,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/famous_2003.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "famous"
+      ],
+      "result": "B+R",
+      "moveCount": 211,
+      "illegalMoves": 0
+    },
+    {
+      "id": "takemiya_cho_2015",
+      "title": "武宫正树 vs 赵治勋 王座战",
+      "players": "武宫正树(黑) vs 赵治勋(白)",
+      "event": "第5届围棋大师杯 决赛",
+      "year": 2015,
+      "boardSize": 19,
+      "ruleset": "japanese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/takemiya_cho_2015.sgf",
+      "category": "classic",
+      "tags": [
+        "classic",
+        "builtin"
+      ],
+      "result": "W+5.50",
+      "moveCount": 272,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_fanhui_2",
+      "title": "AlphaGo vs Fan Hui",
+      "players": "AlphaGo(黑) vs Fan Hui(白)",
+      "event": "AlphaGo",
+      "year": 2015,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/alphago_fanhui_2.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "alphago",
+        "fan_hui"
+      ],
+      "result": "B+R",
+      "moveCount": 183,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_fanhui_4",
+      "title": "AlphaGo vs Fan Hui",
+      "players": "AlphaGo(黑) vs Fan Hui(白)",
+      "event": "AlphaGo",
+      "year": 2015,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/alphago_fanhui_4.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "alphago",
+        "fan_hui"
+      ],
+      "result": "B+R",
+      "moveCount": 165,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_fanhui_3",
+      "title": "Fan Hui vs AlphaGo",
+      "players": "Fan Hui(黑) vs AlphaGo(白)",
+      "event": "AlphaGo",
+      "year": 2015,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/alphago_fanhui_3.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "alphago",
+        "fan_hui"
+      ],
+      "result": "W+R",
+      "moveCount": 166,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_fanhui_1",
+      "title": "Fan Hui vs AlphaGo",
+      "players": "Fan Hui(黑) vs AlphaGo(白)",
+      "event": "AlphaGo",
+      "year": 2015,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/alphago_fanhui_1.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "alphago",
+        "fan_hui"
+      ],
+      "result": "W+2.5",
+      "moveCount": 272,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_fanhui_5",
+      "title": "Fan Hui vs AlphaGo",
+      "players": "Fan Hui(黑) vs AlphaGo(白)",
+      "event": "AlphaGo",
+      "year": 2015,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/alphago_fanhui_5.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "alphago",
+        "fan_hui"
+      ],
+      "result": "W+R",
+      "moveCount": 214,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_lee_2016_g1",
+      "title": "AlphaGo vs 李世石 第1局",
+      "players": "李世石(黑) vs AlphaGo(白)",
+      "event": "Google DeepMind Challenge Match",
+      "year": 2016,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/alphago_lee_2016_g1.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "builtin",
+        "alphago"
+      ],
+      "result": "W+R",
+      "moveCount": 186,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_lee_2016_g2",
+      "title": "AlphaGo vs 李世石 第2局",
+      "players": "AlphaGo(黑) vs 李世石(白)",
+      "event": "Google DeepMind Challenge Match",
+      "year": 2016,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/alphago_lee_2016_g2.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "builtin",
+        "alphago"
+      ],
+      "result": "B+R",
+      "moveCount": 211,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_lee_2016_g3",
+      "title": "AlphaGo vs 李世石 第3局",
+      "players": "李世石(黑) vs AlphaGo(白)",
+      "event": "Google DeepMind Challenge Match",
+      "year": 2016,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/alphago_lee_2016_g3.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "builtin",
+        "alphago"
+      ],
+      "result": "W+R",
+      "moveCount": 176,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_lee_2016_g4",
+      "title": "AlphaGo vs 李世石 第4局",
+      "players": "AlphaGo(黑) vs 李世石(白)",
+      "event": "Google DeepMind Challenge Match",
+      "year": 2016,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/alphago_lee_2016_g4.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "builtin",
+        "alphago"
+      ],
+      "result": "W+R",
+      "moveCount": 180,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_lee_2016_g5",
+      "title": "AlphaGo vs 李世石 第5局",
+      "players": "李世石(黑) vs AlphaGo(白)",
+      "event": "Google DeepMind Challenge Match",
+      "year": 2016,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/alphago_lee_2016_g5.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "builtin",
+        "alphago"
+      ],
+      "result": "W+R",
+      "moveCount": 280,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_master_iyama_2017",
+      "title": "Master vs 井山裕太",
+      "players": "Master(黑) vs 井山裕太(白)",
+      "event": "AlphaGo Master 网络快棋",
+      "year": 2017,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/alphago_master_iyama_2017.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "builtin",
+        "alphago"
+      ],
+      "result": "B+R",
+      "moveCount": 135,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_master_guli_2017",
+      "title": "Master vs 古力",
+      "players": "Master(黑) vs 古力(白)",
+      "event": "AlphaGo Master 网络快棋",
+      "year": 2017,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/alphago_master_guli_2017.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "builtin",
+        "alphago"
+      ],
+      "result": "B+R",
+      "moveCount": 191,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_master_kejie_2017",
+      "title": "Master vs 柯洁",
+      "players": "Master(黑) vs 柯洁(白)",
+      "event": "AlphaGo Master 网络快棋",
+      "year": 2017,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/alphago_master_kejie_2017.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "builtin",
+        "alphago"
+      ],
+      "result": "B+5.5",
+      "moveCount": 228,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_master_nieweiping_2017",
+      "title": "Master vs 聂卫平",
+      "players": "Master(黑) vs 聂卫平(白)",
+      "event": "AlphaGo Master 网络快棋",
+      "year": 2017,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/alphago_master_nieweiping_2017.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "builtin",
+        "alphago"
+      ],
+      "result": "B+7.5",
+      "moveCount": 254,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_may2017_4",
+      "title": "乌镇团体赛 五人 vs AlphaGo",
+      "players": "Chen Yaoye & Zhou Ruiyang & Mi Yuting & Shi Yue & Tang Weixing(黑) vs AlphaGo(白)",
+      "event": "Future of Go Summit",
+      "year": 2017,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/alphago_may2017_4.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "alphago",
+        "wuzhen"
+      ],
+      "result": "W+R",
+      "moveCount": 254,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_master_changhao_2017",
+      "title": "常昊 vs Master",
+      "players": "常昊(黑) vs Master(白)",
+      "event": "AlphaGo Master 网络快棋",
+      "year": 2017,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/alphago_master_changhao_2017.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "builtin",
+        "alphago"
+      ],
+      "result": "W+R",
+      "moveCount": 178,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_master_park_2017",
+      "title": "朴廷桓 vs Master",
+      "players": "朴廷桓(黑) vs Master(白)",
+      "event": "AlphaGo Master 网络快棋",
+      "year": 2017,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/alphago_master_park_2017.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "builtin",
+        "alphago"
+      ],
+      "result": "W+0.5",
+      "moveCount": 261,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_kejie_2017_g1",
+      "title": "柯洁 vs AlphaGo 乌镇第1局",
+      "players": "柯洁(黑) vs AlphaGo(白)",
+      "event": "Future of Go Summit 乌镇",
+      "year": 2017,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/alphago_kejie_2017_g1.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "builtin",
+        "alphago"
+      ],
+      "result": "W+0.5",
+      "moveCount": 289,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_kejie_2017_g2",
+      "title": "柯洁 vs AlphaGo 乌镇第2局",
+      "players": "AlphaGo(黑) vs 柯洁(白)",
+      "event": "Future of Go Summit 乌镇",
+      "year": 2017,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/alphago_kejie_2017_g2.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "builtin",
+        "alphago"
+      ],
+      "result": "B+R",
+      "moveCount": 155,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_kejie_2017_g3",
+      "title": "柯洁 vs AlphaGo 乌镇第3局",
+      "players": "AlphaGo(黑) vs 柯洁(白)",
+      "event": "Future of Go Summit 乌镇",
+      "year": 2017,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 7.5,
+      "sgfAssetPath": "assets/master_games/alphago_kejie_2017_g3.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "builtin",
+        "alphago"
+      ],
+      "result": "B+R",
+      "moveCount": 209,
+      "illegalMoves": 0
+    },
+    {
+      "id": "alphago_master_miyuting_2017",
+      "title": "芈昱廷 vs Master",
+      "players": "芈昱廷(黑) vs Master(白)",
+      "event": "AlphaGo Master 网络快棋",
+      "year": 2017,
+      "boardSize": 19,
+      "ruleset": "chinese",
+      "komi": 6.5,
+      "sgfAssetPath": "assets/master_games/alphago_master_miyuting_2017.sgf",
+      "category": "ai",
+      "tags": [
+        "ai",
+        "builtin",
+        "alphago"
+      ],
+      "result": "W+2.5",
+      "moveCount": 274,
+      "illegalMoves": 0
+    }
+  ]
+}

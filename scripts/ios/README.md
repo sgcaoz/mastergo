@@ -2,6 +2,8 @@
 
 iOS 路径只允许通过 `KataGo.xcframework` 使用引擎，不再使用 `assets/native/ios` 中的可执行文件。
 
+进程内静态库链接进 `Runner.app`，无 `posix_spawn`，符合 App Store。引擎版本由 `scripts/katago/apply_engine.sh` 固定为 **v1.18.1**（支持 transformer 中网）。
+
 在项目根目录执行：
 
 ```bash

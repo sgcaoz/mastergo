@@ -4,7 +4,7 @@
 
 - **不再使用** `assets/native/ios/simulator-arm64/katago` 或任何 assets 里的 katago 可执行文件。
 - **模拟器与真机统一**：都使用嵌入的 **KataGo.xcframework**，由 Xcode 在构建时选择对应 slice（ios-arm64 真机 / ios-arm64-simulator 模拟器）。
-- **符合 App Store**：KataGo 以 .framework 形式作为合法 CFBundleExecutable 存在于 app bundle 内，不会触发 “Invalid bundle structure”。
+- **符合 App Store**：KataGo 以静态库 XCFramework 链入 `Runner`（进程内 `kg_analysis_*`），不 `posix_spawn` 可执行文件，避免 “Invalid bundle structure”。引擎固定为 v1.18.1，权重为 transformer 小网 `tf2-b10c384`。
 
 ## 2. 构建 KataGo.xcframework
 

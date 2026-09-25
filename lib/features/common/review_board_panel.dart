@@ -104,14 +104,17 @@ class ReviewBoardPanel extends StatelessWidget {
     final bool useLandscapeSplit =
         screenSize.width > screenSize.height && screenSize.width >= 700;
 
-    final Widget board = GoBoardWidget(
-      boardSize: state.boardSize,
-      board: state.board,
-      onTapPoint: tryMode ? onTryPlay : null,
-      lastMovePoint: lastMovePoint,
-      tentativePoint: tryMode ? tentativePoint : null,
-      tentativeStone: tryMode ? tentativeStone : null,
-      hintPoints: hintPoints,
+    final Widget board = GoBoardStage(
+      child: GoBoardWidget(
+        boardSize: state.boardSize,
+        board: state.board,
+        onTapPoint: tryMode ? onTryPlay : null,
+        lastMovePoint: lastMovePoint,
+        tentativePoint: tryMode ? tentativePoint : null,
+        tentativeStone: tryMode ? tentativeStone : null,
+        hintPoints: hintPoints,
+        enableHover: tryMode,
+      ),
     );
 
     final Widget infoPanel = Column(
@@ -235,7 +238,7 @@ class ReviewBoardPanel extends StatelessWidget {
             ],
           )
         else ...<Widget>[
-          SizedBox(height: boardHeight, child: board),
+          AspectRatio(aspectRatio: 1, child: board),
           const SizedBox(height: 8),
           infoPanel,
         ],

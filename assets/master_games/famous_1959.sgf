@@ -1,0 +1,72 @@
+(;RU[chinese]C[ White: Go Seigen 9-dan  Black: Takagawa Kaku, Honinbo Shukaku, 8-dan  Played on 9 and 10 January 1959 at Atami Hot Spring, Shizuoka Prefecture.  Event: Game 2 of 3-game match "Go Seigen versus the Honinbo" sponsored by Mainichi Shinbun.  Time limits: 10 hours each.  Komi: 4.5 points.  244 moves. Black wins by .5 point. ]B[pd]SZ[19]EV[Go Seigen versus Honinbo]DT[1959-01-09]PC[Atami, Shizuoka Prefecture]PB[Takagawa Taku]BR[Honinbo]PW[Go Seigen]WR[9dan]TM[10 hours]KM[4.5]RE[B+0.5]US[tasuki];W[dc];B[dp];W[pq];B[qo]
+;W[pl];B[pn];W[np];B[qq]C[ Nowadays, Black 9 would by simply at A. ];W[qr];B[pp];W[oq];B[rq];W[jq];B[ce];W[dh]
+(;B[cm]C[ Black 17 helps the single Black stone indirectly. If Black played at "a".. ]
+(;W[qf]C[ An alternative to White 18 is at "a". White decided to wait and see what White would do. ];B[nd];W[rd];B[qc];W[qi]
+(;B[gd]C[ This is the crucial move which determines the direction of the game. If he played at "a" instead..]
+(;W[de]C[ If White plays at "a"..];B[dd];W[ed];B[cd];W[eb];B[df];W[ee];B[dg];W[eh]
+(;B[ff]C[ Black 33 cannot be at "a".];W[ef];B[eg];W[fg];B[ch]
+(;W[gg]C[ White 38 is good and better than at "a".]
+(;B[gf]C[ Black 39 would be better at "a".];W[hf];B[he]
+(;W[if]C[ An alternative is at "a".];B[jd];W[je]
+(;B[gb]C[ Black was perplexed by White 44. If he plays at "a" or "b"..];W[bc];B[ci];W[kd];B[jc]
+(;W[md]C[ White 50 is a strong move. White 50 at "a" might be normal, but..];B[hg]C[ Without this cut Black cannot hope to go on.];W[gi];B[ke];W[ne];B[jf];W[od]
+(;B[pe]C[ It seems to have been better for Black to play at "a".];W[oc];B[oe]C[ Black 59 prepares to live in the corner.];W[nf]
+(;B[og]C[ Black can play at "a" which would be better because he wants to have sente and he doesn't want White to have an easy time.]
+(;W[rc]C[ If White plays 62 at "a"..];B[pg];W[qb];B[pi];W[pj];B[oj];W[oi];B[ni];W[ph];B[oh]
+(;W[pc]C[ White 72 cannot be omitted.]
+(;B[ig]C[ Black 73 might be better at "a".]
+(;W[nj]C[ White 74 is a vigorous move. White doesn't want to connect at "a" because..];B[pi];W[cf];B[cg];W[oi]
+(;B[cc]C[ Black 79 is a bad ko threat but he cannot play at "a". However an alternative was to play at "b"..];W[cb];B[pi];W[bf];B[ok];W[oi];B[db];W[da];B[pi];W[dj];B[di];W[oi];B[mj]
+;W[nh];B[pi];W[fe];B[ie];W[oi];B[nk];W[mh];B[pi];W[ej]
+(;B[ei]C[ If Black finishes the ko now..];W[oi];B[kp];W[pi];B[kq];W[cj];B[fj];W[fi];B[fk]
+(;W[cl]C[ White is seeking to play at A, so he plays here for the aji. If he played at "a" immediately..];B[dl];W[dm];B[ck];W[bj];B[bl];W[fh];B[hj];W[hi];B[ii];W[bi];B[mq];W[qm]
+;B[nn]C[ Black 23 is necessary to capture the group on the lower side.]
+(;W[ij]C[ White is probing Black's response. If he played at "a" to live in the lower right corner..];B[ik];W[jj];B[jp];W[gj];B[hk];W[gk];B[gl];W[fl];B[ek];W[el];B[dk];W[bk]
+;B[cl];W[ji];B[gm]
+(;W[li]C[ White can't now live in the lower corner because..];B[dq];W[kl];B[kn];W[om];B[on];W[jm];B[hn];W[jn];B[jo];W[mr];B[lr];W[mp]
+;B[lp];W[rr];B[sr];W[nr];B[ms];W[nm]
+(;B[pm]C[ If Black plays at "a" instead..];W[mm];B[ql];W[rl];B[qk];W[pk];B[rm];W[rk];B[qn];W[cn];B[am];W[fn];B[en]
+;W[fm];B[fo];W[hl];B[gn];W[kc];B[ld];W[lc];B[le];W[jb];B[mc];W[nc];B[mb];W[lb]
+;B[me];W[nd];B[la];W[kb];B[ib];W[nb];B[il];W[mn];B[mo];W[lo];B[no];W[ln];B[fc]
+;W[ec];B[ko];W[km];B[ih];W[ge];B[hf];W[bg];B[kh];W[mf];B[fb];W[im];B[hm];W[lg]
+;B[fa]C[ Black 11 is a fatal mistake. Any other move would lead to Black's victory.];W[in];B[io];W[jk];B[ki];W[kj];B[ja];W[ma];B[sl];W[rj];B[sk];W[sj];B[sm]
+;W[kf];B[jh];W[ak];B[al];W[ka];B[ia];W[jl];B[hl];W[qj];B[qm];W[ns];B[rs];W[ps]
+;B[or];W[lf];B[je];W[kg];B[lh];W[bh];B[hh];W[fd]C[ 244 moves. Black wins by .5 point.  White used 8 hours 4 minutes.  Black used 9 hours 56 minutes.  The game was adjudicated as a half point win for Black because White would have to add a further stone to prevent the ko shown in the following moves. ];B[lj];W[mi];B[ll];W[lk];B[ml]
+;W[nj];B[ea];W[jg];B[ni];W[lm];B[ol];W[nj];B[gh]C[ 58 passes.];W[tt];B[ni];W[ho];B[go];W[nj]
+;B[ca];W[mk];B[db];W[rp];B[qp];W[da]C[Black now has no more ko threats. Therefore Go Seigen believed that he didn't need to play another move. However a rule had been institued some move previously saying "Where there is a ko effective by the next move, it should be continued."])
+(;B[mm];W[lm]C[   White will play at 2.]))
+(;W[lr];B[kr];W[mr];B[mp];W[rr];B[ih];W[bg];B[li]C[   Black will kill the stones in the centre.]))
+(;W[lr];B[kr];W[mr];B[mp];W[rr];B[gj];W[bh];B[dq]C[   Black will secure an enormous territory up to 8 and win.]))
+(;W[fh];B[bj];W[bk];B[bi];W[cl];B[hj]C[   Black would win easily.])
+(;W[hj];B[fh];W[gh];B[bj];W[bk];B[ck];W[bi];B[aj];W[ai];B[dk];W[ak];B[bj];W[aj]
+;B[ek];W[bj];B[bg];W[be];B[bl]C[   White will also lose this fight.]))
+(;B[qh];W[cj];B[ei];W[fi];B[bj];W[bk];B[bi];W[cl];B[bg];W[be];B[fh];W[gh];B[eh]
+;W[bm]C[   White would be happy to get 14 in even though Black lives.]))
+(;B[ok];W[pi]
+(;B[mi];W[nh];B[ng];W[mh];B[mg];W[lh]
+(;B[li];W[ki];B[mk];W[lg];B[lf];W[mf];B[kh];W[kg];B[jh];W[le]C[   Black would lose the fight up to 18.])
+(;B[lg];W[kh]C[     If Black plays on this side, White will gain sente which would give him     the lead.]))
+(;B[mh];W[mj];B[kh];W[kj]C[     If Black plays at 1, the sequence to 4 would follow.]))
+(;B[kp];W[ok];B[kq];W[mi];B[eq]C[   This would be a large-scale exchange and Black 5 is very good.]))
+(;W[pi];B[mh]C[   Black would play at 2 and White has a defect at A.]))
+(;B[pi];W[ig];B[ie];W[oi];B[hh]C[   This might be better for Black. However, Go hardly ever lost ko-fights and   might win this one by any means.]))
+(;W[tt];B[pb];W[pc];B[nc];W[ob];B[nb];W[qd];B[lb]C[   The four White stones are stranded.]))
+(;W[of];B[pf];W[pg];B[qg];W[ph];B[rf];W[qe];B[pc];W[rg];B[nc]C[   Black will take two stones while White has outside thickness. Go did not   like this sequence.]))
+(;B[ob];W[nc];B[rc];W[pb];B[qb]))
+(;B[rc];W[pe];B[re];W[rf];B[sd];W[ig];B[ie];W[hh]C[   White is happy with the moves to 8 and he prepares to press at A.]))
+(;W[le];B[lc];W[kc];B[kb];W[jb];B[ld];W[ke];B[ib];W[oe];B[od]C[   This would be the normal sequence, but White does not like to give Black   the sure territory.]))
+(;B[kd];W[id];B[ic];W[hc]C[   White will be able to cpature the four stones with 2 and 4.])
+(;B[id];W[bc];B[ci];W[le]C[   White would play 2, forcing Black 3 and then press at 4. Black will have a   hard time on the upper side and a White move at A is still a threat.]))
+(;W[hg];B[ie];W[ci];B[bg];W[bh];B[cg];W[dj];B[fc];W[ec];B[bb];W[cb];B[bc];W[fd]
+;B[ge];W[gc];B[hc];W[gb]C[   After the sequence to 17, White's outside wall is so strong that he should   be able to invade at A.]))
+(;B[ci]
+(;W[ge]C[   If White 2 at "a"..];B[fc];W[ec];B[jd]C[   This would be a good development for Black.])
+(;W[jd];B[ie]C[     Black will begin a fight with 2.])))
+(;W[fh];B[gf]C[   Black 2 is then too good.]))
+(;B[fg];W[eg];B[ef];W[ff];B[fe];W[gf]C[   White may then catch the single Black stone in a geta at A.]))
+(;W[ed];B[eg];W[ge];B[he];W[fe];B[dg];W[ch];B[cg];W[hd];B[id];W[hc];B[ic];W[gb]
+;B[hb];W[gc];B[hf]C[   This sequence would give Black too good a position on the upper side and   leave two White stones stranded on the left.]))
+(;B[gc];W[ed];B[jc];W[df]C[   White would be happy to play at 2 and 4.]))
+(;W[cd];B[de];W[fd];B[eg];W[eh];B[fg];W[fh];B[gg];W[dg];B[fe];W[ed];B[df];W[ic]
+;B[gh];W[gi];B[hi];W[gj];B[hj];W[gk];B[hk];W[gl];B[pi]C[   If White plays at 1, Black will play the sequence to 20 and then pincer at   22, which would be good for him. ]))
+(;B[df];W[fd];B[cc];W[cb];B[dd];W[ec];B[bc];W[jc]C[   White would be happy to play this way. ]))

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:mastergo/application/batch/master_winrate_rules.dart';
 import 'package:mastergo/domain/entities/analysis_profile.dart';
 import 'package:mastergo/domain/entities/game_record.dart';
 import 'package:mastergo/domain/entities/game_rules.dart';
@@ -13,8 +14,8 @@ import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
 import 'package:mastergo/infra/storage/game_record_repository.dart';
 import 'package:path_provider/path_provider.dart';
 
-/// 名局每步胜率批量分析：maxVisits=2，规则以 SGF 为准（含古谱、让子），
-/// 先写临时文件，跑完后写入 DB；支持断点恢复与引擎唤醒重试。
+/// 名局每步胜率批量分析：规则/贴目以数据库记录为准（古谱 classical、贴目 0），
+/// 先写临时文件，支持断点续跑。
 class MasterWinrateBatchRunner {
   MasterWinrateBatchRunner({
     required KatagoAdapter adapter,
@@ -217,8 +218,23 @@ class MasterWinrateBatchRunner {
       final StoneColor startingPlayer = sgf.initialBlackStones.isNotEmpty
           ? StoneColor.white
           : StoneColor.black;
-      final GameRules rules =
-          rulePresetFromString(sgf.rules).toGameRules(komi: sgf.komi);
+      final String category = () {
+        try {
+          final Object decoded = jsonDecode(record.sessionJson);
+          if (decoded is Map<String, dynamic>) {
+            return (decoded['category'] as String?) ?? '';
+          }
+        } catch (_) {}
+        return '';
+      }();
+      final engineRules = resolveMasterWinrateRules(
+        dbRuleset: record.ruleset,
+        dbKomi: record.komi,
+        category: category,
+      );
+      final GameRules rules = rulePresetFromString(engineRules.presetId)
+          .toGameRules(komi: engineRules.komi)
+          .copyWith(ruleset: engineRules.kataGoRules);
 
       Map<String, double> gameWinrates = _results[record.id] ?? <String, double>{};
       int startTurn = 0;

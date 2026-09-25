@@ -11,6 +11,25 @@ String serializeSgf(SgfGame game) {
   return sb.toString();
 }
 
+/// Collection files nest one problem per child tree, matching [SgfParser.parseCollection].
+String serializeSgfCollection(
+  List<SgfGame> games, {
+  int boardSize = 19,
+  String? comment,
+}) {
+  final StringBuffer sb = StringBuffer();
+  sb.write('(;GM[1]FF[4]SZ[$boardSize]');
+  if (comment != null && comment.isNotEmpty) {
+    sb.write('C[${_escapeText(comment)}]');
+  }
+  for (final SgfGame game in games) {
+    sb.write('\n');
+    sb.write(serializeSgf(game));
+  }
+  sb.write('\n)');
+  return sb.toString();
+}
+
 void _writeRootProps(StringBuffer sb, SgfGame game) {
   sb.write('GM[1]FF[4]');
   sb.write('SZ[${game.boardSize}]');
@@ -30,6 +49,12 @@ void _writeRootProps(StringBuffer sb, SgfGame game) {
   }
   if (game.gameName != null && game.gameName!.isNotEmpty) {
     sb.write('GN[${_escapeText(game.gameName!)}]');
+  }
+  if (game.playerToMove != null) {
+    sb.write('PL[${game.playerToMove == GoStone.white ? 'W' : 'B'}]');
+  }
+  if (game.comment != null && game.comment!.isNotEmpty) {
+    sb.write('C[${_escapeText(game.comment!)}]');
   }
   if (game.result != null && game.result!.isNotEmpty) {
     sb.write('RE[${_escapeText(game.result!)}]');

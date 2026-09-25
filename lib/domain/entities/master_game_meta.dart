@@ -10,6 +10,7 @@ class MasterGameMeta {
     required this.komi,
     required this.sgfAssetPath,
     this.tags = const <String>[],
+    this.category = '',
   });
 
   final String id;
@@ -22,6 +23,9 @@ class MasterGameMeta {
   final double komi;
   final String sgfAssetPath;
   final List<String> tags;
+
+  /// Primary library bucket: ancient / international / classic / ai.
+  final String category;
 
   factory MasterGameMeta.fromJson(Map<String, dynamic> json) {
     final List<dynamic> rawTags = json['tags'] as List<dynamic>? ?? <dynamic>[];
@@ -36,6 +40,7 @@ class MasterGameMeta {
       komi: (json['komi'] as num).toDouble(),
       sgfAssetPath: json['sgfAssetPath'] as String,
       tags: rawTags.map((dynamic item) => item as String).toList(),
+      category: (json['category'] as String?)?.trim() ?? '',
     );
   }
 }

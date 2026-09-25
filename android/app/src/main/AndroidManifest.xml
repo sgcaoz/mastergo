@@ -1,4 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="@string/app_name"
         android:name="${applicationName}"
@@ -25,19 +26,26 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- 用本应用打开 .sgf 文件（导入棋谱） -->
+            <!-- 仅关联棋谱。不要写 mimeType=*/*：那会把自己注册成
+                 「打开任意文件」，国产 ROM / Play Protect 会直接禁止安装。
+                 拍照识谱走 ImagePicker（我们去调相机/相册），不需要 VIEW。 -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="content"/>
                 <data android:scheme="file"/>
-                <data android:pathSuffix=".sgf"/>
-                <data android:pathPrefix="/"/>
+                <data android:mimeType="application/x-go-sgf"/>
+                <data android:mimeType="application/sgf"/>
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
-                <data android:scheme="content"/>
-                <data android:mimeType="*/*"/>
+                <data android:scheme="file"/>
+                <data android:host="*"/>
+                <data android:pathPattern=".*\\.sgf"/>
+                <data android:pathPattern=".*\\..*\\.sgf"/>
+                <data android:pathPattern=".*\\..*\\..*\\.sgf"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

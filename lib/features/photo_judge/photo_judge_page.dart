@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -18,6 +16,7 @@ import 'package:mastergo/features/common/ownership_result_sheet.dart';
 import 'package:mastergo/features/photo_judge/board_corner_editor.dart';
 import 'package:mastergo/features/photo_judge/go_board_recognizer_opencv.dart';
 import 'package:mastergo/infra/engine/katago/katago_adapter.dart';
+import 'package:mastergo/infra/engine/katago/katago_engine_scope.dart';
 
 class PhotoJudgePage extends StatefulWidget {
   const PhotoJudgePage({super.key});
@@ -37,7 +36,6 @@ const AnalysisProfile _photoContinueFallbackProfile = AnalysisProfile(
 
 class _PhotoJudgePageState extends State<PhotoJudgePage> {
   final ImagePicker _picker = ImagePicker();
-  final KatagoAdapter _adapter = PlatformKatagoAdapter();
   final AIProfileRepository _profileRepository = AIProfileRepository();
   /// 拍照分析用快速档时间：10s 思考，超时 2×=20s（与原则一致）。
   static const AnalysisProfile _analysisProfile = AnalysisProfile(
@@ -64,19 +62,15 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
   List<GoPoint> _hintPoints = <GoPoint>[];
   String? _hintSummary;
   String? _judgeText;
+  int _boardSize = 19;
   AppStrings get _s => AppStrings.of(context);
+  KatagoAdapter get _adapter => KatagoEngineScope.of(context);
   String _t({
     required String zh,
     required String en,
     required String ja,
     required String ko,
   }) => _s.pick(zh: zh, en: en, ja: ja, ko: ko);
-
-  @override
-  void dispose() {
-    unawaited(_adapter.shutdown());
-    super.dispose();
-  }
 
   Future<void> _takePhoto() async {
     final XFile? x = await _picker.pickImage(source: ImageSource.camera);
@@ -173,10 +167,22 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
       );
       _loading = true;
     });
-    await _recognizeWithCurrentStrategy();
+    await _recognizeBoard(preferAlternate: true);
   }
 
-  Future<void> _recognizeWithCurrentStrategy() async {
+  BoardRecognitionStrategy get _alternateStrategy =>
+      _strategy == BoardRecognitionStrategy.noClahe
+          ? BoardRecognitionStrategy.withClahe
+          : BoardRecognitionStrategy.noClahe;
+
+  Future<void> _recognizeAlternate() async {
+    setState(() {
+      _strategy = _alternateStrategy;
+    });
+    await _recognizeBoard(preferAlternate: false);
+  }
+
+  Future<void> _recognizeBoard({required bool preferAlternate}) async {
     final Uint8List? preparedBytes = _preparedPhotoBytes;
     final List<Offset>? corners = _calibratedCorners;
     if (preparedBytes == null || corners == null || corners.length != 4) return;
@@ -185,30 +191,54 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
       _clearAnalysisResult();
     });
     try {
-      final RecognizedBoard? board = recognizeGoBoardWithCorners(
+      BoardRecognitionStrategy strategy = _strategy;
+      RecognizedBoard? board = recognizeGoBoardWithCorners(
         preparedBytes,
         corners,
-        strategy: _strategy,
+        boardSize: _boardSize,
+        strategy: strategy,
       );
+      final bool empty =
+          board == null || (board.blackCount + board.whiteCount) == 0;
+      if (preferAlternate && empty) {
+        final BoardRecognitionStrategy other = strategy == BoardRecognitionStrategy.noClahe
+            ? BoardRecognitionStrategy.withClahe
+            : BoardRecognitionStrategy.noClahe;
+        final RecognizedBoard? alt = recognizeGoBoardWithCorners(
+          preparedBytes,
+          corners,
+          boardSize: _boardSize,
+          strategy: other,
+        );
+        final int altCount = alt == null ? 0 : alt.blackCount + alt.whiteCount;
+        final int curCount = board == null ? 0 : board.blackCount + board.whiteCount;
+        if (alt != null && altCount > curCount) {
+          board = alt;
+          strategy = other;
+        }
+      }
       if (board == null) {
         setState(() {
+          _strategy = strategy;
           _recognized = null;
           _status = _t(
-            zh: '识别失败，请调整四角或切换策略重试',
-            en: 'Recognition failed, adjust corners or switch strategy',
-            ja: '認識失敗。四隅調整または戦略変更で再試行',
-            ko: '인식 실패. 모서리 조정/전략 변경 후 재시도',
+            zh: '识别失败，请调整四角后重试',
+            en: 'Recognition failed, adjust the four corners and retry',
+            ja: '認識失敗。四隅を調整して再試行してください',
+            ko: '인식 실패. 네 모서리를 조정한 뒤 다시 시도하세요',
           );
         });
         return;
       }
+      final RecognizedBoard recognized = board;
       setState(() {
-        _recognized = board;
+        _strategy = strategy;
+        _recognized = recognized;
         _status = _t(
-          zh: '识别完成（${_strategy.label}）：黑${board.blackCount}，白${board.whiteCount}',
-          en: 'Recognition complete (${_strategyLabel(_strategy)}): B${board.blackCount}, W${board.whiteCount}',
-          ja: '認識完了（${_strategyLabel(_strategy)}）：黒${board.blackCount}、白${board.whiteCount}',
-          ko: '인식 완료(${_strategyLabel(_strategy)}): 흑${board.blackCount}, 백${board.whiteCount}',
+          zh: '识别完成：黑${recognized.blackCount}，白${recognized.whiteCount}。点交叉点可改错子。',
+          en: 'Recognized: B${recognized.blackCount}, W${recognized.whiteCount}. Tap an intersection to fix a stone.',
+          ja: '認識完了：黒${recognized.blackCount}、白${recognized.whiteCount}。交点をタップして石を修正できます。',
+          ko: '인식 완료: 흑${recognized.blackCount}, 백${recognized.whiteCount}. 교차점을 눌러 돌을 고칠 수 있습니다.',
         );
       });
     } catch (e) {
@@ -378,23 +408,6 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
     }
   }
 
-  String _strategyLabel(BoardRecognitionStrategy strategy) {
-    if (strategy == BoardRecognitionStrategy.noClahe) {
-      return _t(
-        zh: '默认（无CLAHE）',
-        en: 'Default (No CLAHE)',
-        ja: '標準（CLAHEなし）',
-        ko: '기본(CLAHE 없음)',
-      );
-    }
-    return _t(
-      zh: '额外策略（CLAHE）',
-      en: 'Alternative (CLAHE)',
-      ja: '追加戦略（CLAHE）',
-      ko: '추가 전략(CLAHE)',
-    );
-  }
-
   /// 根据引擎返回的 ownership 判断是否终局：必须所有点 |ownership| 都 > 0.5 才是终局。
   bool _isEndgameByOwnership(List<double>? ownership, int boardSize) {
     if (ownership == null || ownership.length < boardSize * boardSize) {
@@ -424,6 +437,29 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
         playerWin: playerWin.clamp(0.0, 1.0),
       );
     };
+  }
+
+  void _cycleRecognizedStone(GoPoint p) {
+    final RecognizedBoard? r = _recognized;
+    if (r == null || _loading) {
+      return;
+    }
+    if (p.x < 0 || p.y < 0 || p.x >= r.boardSize || p.y >= r.boardSize) {
+      return;
+    }
+    final List<List<GoStone?>> next = r.board
+        .map((List<GoStone?> row) => List<GoStone?>.from(row))
+        .toList();
+    final GoStone? current = next[p.y][p.x];
+    next[p.y][p.x] = switch (current) {
+      null => GoStone.black,
+      GoStone.black => GoStone.white,
+      GoStone.white => null,
+    };
+    setState(() {
+      _recognized = r.copyWithBoard(next);
+      _clearAnalysisResult();
+    });
   }
 
   GoGameState _stateFromRecognized(RecognizedBoard board) {
@@ -517,7 +553,7 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
                         (int i) => DropdownMenuItem<int>(
                           value: i,
                           child: Text(
-                            '${_s.aiProfileName(profiles[i].id, profiles[i].name)} (${profiles[i].maxVisits})',
+                            _s.aiProfileName(profiles[i].id, profiles[i].name),
                           ),
                         ),
                       ),
@@ -556,271 +592,252 @@ class _PhotoJudgePageState extends State<PhotoJudgePage> {
     );
   }
 
+  void _changeBoardSize(int size) {
+    if (size == _boardSize) {
+      return;
+    }
+    setState(() {
+      _boardSize = size;
+      _recognized = null;
+      _clearAnalysisResult();
+    });
+    if (_preparedPhotoBytes != null && _calibratedCorners != null) {
+      unawaited(_recognizeBoard(preferAlternate: true));
+    }
+  }
+
+  String _boardSizeLabel(int size) => _t(
+        zh: '$size路',
+        en: '$size×$size',
+        ja: '$size路',
+        ko: '$size줄',
+      );
+
   @override
   Widget build(BuildContext context) {
     final RecognizedBoard? r = _recognized;
-    return Scaffold(
-      appBar: AppBar(title: Text(_s.tabPhotoJudge)),
-      body: ListView(
-        padding: const EdgeInsets.all(12),
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: kRulePresets.any((RulePreset p) => p.id == _ruleset)
-                      ? _ruleset
-                      : kRulePresets.first.id,
-                  items: kRulePresets
-                      .map(
-                        (RulePreset p) => DropdownMenuItem<String>(
-                          value: p.id,
-                          child: Text(_s.ruleLabel(p.id)),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (String? v) {
-                    if (v != null) {
-                      setState(() {
-                        _ruleset = v;
-                        _clearAnalysisResult();
-                      });
-                    }
-                  },
-                  decoration: InputDecoration(
-                    border: OutlineInputBorder(),
-                    labelText: _t(zh: '规则', en: 'Rules', ja: 'ルール', ko: '규칙'),
-                  ),
-                  isExpanded: true,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      _t(zh: '下一步轮到', en: 'Next Step', ja: '次の手番', ko: '다음 수순'),
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(fontSize: 13),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        children: <Widget>[
-                          _stoneWithLabel(
-                            stone: GoStone.black,
-                            label: _t(zh: '黑', en: 'Black', ja: '黒', ko: '흑'),
-                            selected: _toPlay == GoStone.black,
-                          ),
-                          Transform.scale(
-                            scale: 0.85,
-                            child: Switch.adaptive(
-                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              value: _toPlay == GoStone.white,
-                              activeTrackColor: Theme.of(
-                                context,
-                              ).colorScheme.surfaceContainerHighest,
-                              inactiveTrackColor: Theme.of(
-                                context,
-                              ).colorScheme.surfaceContainerHighest,
-                              trackOutlineColor: WidgetStateProperty.all(
-                                const Color(0xFF424242),
-                              ),
-                              trackOutlineWidth: WidgetStateProperty.all(1),
-                              thumbColor: WidgetStateProperty.resolveWith<Color>((Set<WidgetState> states) {
-                                return states.contains(WidgetState.selected)
-                                    ? Colors.white
-                                    : Colors.black;
-                              }),
-                              onChanged: _loading
-                                  ? null
-                                  : (bool whiteTurn) {
-                                      setState(() {
-                                        _toPlay = whiteTurn ? GoStone.white : GoStone.black;
-                                        _clearAnalysisResult();
-                                      });
-                                    },
-                            ),
-                          ),
-                          _stoneWithLabel(
-                            stone: GoStone.white,
-                            label: _t(zh: '白', en: 'White', ja: '白', ko: '백'),
-                            selected: _toPlay == GoStone.white,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          DropdownButtonFormField<BoardRecognitionStrategy>(
-            initialValue: _strategy,
-            items: BoardRecognitionStrategy.values
-                .map(
-                  (BoardRecognitionStrategy s) => DropdownMenuItem<BoardRecognitionStrategy>(
-                    value: s,
-                    child: Text(_strategyLabel(s)),
-                  ),
-                )
-                .toList(),
-            onChanged: _loading
-                ? null
-                : (BoardRecognitionStrategy? s) {
-                    if (s == null || s == _strategy) return;
-                    setState(() => _strategy = s);
-                    if (_preparedPhotoBytes != null && _calibratedCorners != null) {
-                      unawaited(_recognizeWithCurrentStrategy());
-                    }
-                  },
-            decoration: InputDecoration(
-              border: OutlineInputBorder(),
-              labelText: _t(zh: '识别策略', en: 'Strategy', ja: '認識戦略', ko: '인식 전략'),
-            ),
-            isExpanded: true,
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: <Widget>[
-              FilledButton.icon(
+    final ButtonStyle photoButtonStyle = FilledButton.styleFrom(
+      minimumSize: const Size.fromHeight(48),
+    );
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: FilledButton.icon(
                 onPressed: _loading ? null : _takePhoto,
+                style: photoButtonStyle,
                 icon: const Icon(Icons.photo_camera),
                 label: Text(_t(zh: '拍照', en: 'Camera', ja: '撮影', ko: '촬영')),
               ),
-              OutlinedButton.icon(
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
                 onPressed: _loading ? null : _pickFromGallery,
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                ),
                 icon: const Icon(Icons.photo_library_outlined),
                 label: Text(_t(zh: '相册', en: 'Gallery', ja: 'アルバム', ko: '앨범')),
               ),
-            ],
-          ),
-          if (_photoBytes != null) ...<Widget>[
-            const SizedBox(height: 12),
-            Text(
-              _t(zh: '您选择的图片', en: 'Selected Image', ja: '選択画像', ko: '선택한 이미지'),
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 6),
-            Center(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.memory(
-                  _photoBytes!,
-                  fit: BoxFit.contain,
-                  height: 280,
-                ),
-              ),
             ),
           ],
-          if (r != null) ...<Widget>[
-            const SizedBox(height: 16),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: Text(
-                    _t(
-                      zh: '识别结果（棋盘） 黑${r.blackCount} 白${r.whiteCount}',
-                      en: 'Recognition (board) B${r.blackCount} W${r.whiteCount}',
-                      ja: '認識結果（盤） 黒${r.blackCount} 白${r.whiteCount}',
-                      ko: '인식 결과(판) 흑${r.blackCount} 백${r.whiteCount}',
-                    ),
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: _loading ? null : _analyzePosition,
-                  icon: const Icon(Icons.analytics_outlined),
-                  label: Text(_t(zh: '分析局面', en: 'Analyze', ja: '局面分析', ko: '국면 분석')),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: _loading ? null : _openContinuePlay,
-                  icon: const Icon(Icons.play_arrow, size: 20),
-                  label: Text(_t(zh: '续下', en: 'Continue', ja: '続き対局', ko: '계속 대국')),
-                ),
-              ],
+        ),
+        if (_photoBytes == null && !_loading) ...<Widget>[
+          const SizedBox(height: 8),
+          Text(
+            _t(
+              zh: '拍棋盘，或从相册选一张。',
+              en: 'Take a board photo, or pick one from the gallery.',
+              ja: '盤面を撮るか、アルバムから選んでください。',
+              ko: '바둑판을 찍거나 앨범에서 고르세요.',
             ),
-            const SizedBox(height: 6),
-            SizedBox(
-              height: 360,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+        if (_status != null) ...<Widget>[
+          const SizedBox(height: 8),
+          Text(_status!, maxLines: 3, overflow: TextOverflow.ellipsis),
+        ],
+        const SizedBox(height: 16),
+        Text(
+          _t(zh: '路数', en: 'Board size', ja: '路', ko: '줄수'),
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
+        const SizedBox(height: 8),
+        SegmentedButton<int>(
+          expandedInsets: EdgeInsets.zero,
+          showSelectedIcon: false,
+          segments: <int>[9, 13, 19]
+              .map(
+                (int size) => ButtonSegment<int>(
+                  value: size,
+                  label: Text(_boardSizeLabel(size)),
+                ),
+              )
+              .toList(),
+          selected: <int>{_boardSize},
+          onSelectionChanged: _loading
+              ? null
+              : (Set<int> next) {
+                  if (next.isEmpty) {
+                    return;
+                  }
+                  _changeBoardSize(next.first);
+                },
+        ),
+        const SizedBox(height: 16),
+        DropdownButtonFormField<String>(
+          initialValue: kRulePresets.any((RulePreset p) => p.id == _ruleset)
+              ? _ruleset
+              : kRulePresets.first.id,
+          isExpanded: true,
+          items: kRulePresets
+              .map(
+                (RulePreset p) => DropdownMenuItem<String>(
+                  value: p.id,
+                  child: Text(_s.ruleLabel(p.id)),
+                ),
+              )
+              .toList(),
+          onChanged: (String? v) {
+            if (v != null) {
+              setState(() {
+                _ruleset = v;
+                _clearAnalysisResult();
+              });
+            }
+          },
+          decoration: InputDecoration(
+            border: const OutlineInputBorder(),
+            labelText: _t(zh: '规则', en: 'Rules', ja: 'ルール', ko: '규칙'),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          _t(zh: '下一步轮到', en: 'To play', ja: '次の手番', ko: '다음 수순'),
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
+        const SizedBox(height: 8),
+        SegmentedButton<GoStone>(
+          expandedInsets: EdgeInsets.zero,
+          showSelectedIcon: false,
+          segments: <ButtonSegment<GoStone>>[
+            ButtonSegment<GoStone>(
+              value: GoStone.black,
+              label: Text(_t(zh: '黑', en: 'Black', ja: '黒', ko: '흑')),
+            ),
+            ButtonSegment<GoStone>(
+              value: GoStone.white,
+              label: Text(_t(zh: '白', en: 'White', ja: '白', ko: '백')),
+            ),
+          ],
+          selected: <GoStone>{_toPlay},
+          onSelectionChanged: _loading
+              ? null
+              : (Set<GoStone> next) {
+                  if (next.isEmpty) {
+                    return;
+                  }
+                  setState(() {
+                    _toPlay = next.first;
+                    _clearAnalysisResult();
+                  });
+                },
+        ),
+        if (r != null) ...<Widget>[
+          const SizedBox(height: 20),
+          Text(
+            _t(
+              zh: '识别结果  黑${r.blackCount}  白${r.whiteCount}',
+              en: 'Recognized  B${r.blackCount}  W${r.whiteCount}',
+              ja: '認識結果  黒${r.blackCount}  白${r.whiteCount}',
+              ko: '인식 결과  흑${r.blackCount}  백${r.whiteCount}',
+            ),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _t(
+              zh: '点交叉点可改子：空 → 黑 → 白 → 空',
+              en: 'Tap an intersection to fix: empty → black → white → empty',
+              ja: '交点をタップして修正：空 → 黒 → 白 → 空',
+              ko: '교차점을 눌러 수정: 빈칸 → 흑 → 백 → 빈칸',
+            ),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 8),
+          AspectRatio(
+            aspectRatio: 1,
+            child: GoBoardStage(
               child: GoBoardWidget(
                 boardSize: r.boardSize,
                 board: r.board,
                 hintPoints: _hintPoints,
+                onTapPoint: _loading ? null : _cycleRecognizedStone,
+                enableHover: false,
               ),
             ),
-          ],
-          if (_judgeText != null) ...<Widget>[
-            const SizedBox(height: 8),
-            Text(_judgeText!, maxLines: 3, overflow: TextOverflow.ellipsis),
-          ],
-          if (_hintSummary != null) ...<Widget>[
-            const SizedBox(height: 6),
-            Text(
-              _t(
-                zh: '提示落子: $_hintSummary',
-                en: 'Suggested moves: $_hintSummary',
-                ja: '候補手: $_hintSummary',
-                ko: '추천 수: $_hintSummary',
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              OutlinedButton(
+                onPressed: _loading ? null : _recognizeAlternate,
+                child: Text(
+                  _t(
+                    zh: '换一种识别',
+                    en: 'Try another scan',
+                    ja: '別の認識',
+                    ko: '다른 방식으로 인식',
+                  ),
+                ),
               ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-          if (_status != null) ...<Widget>[
-            const SizedBox(height: 8),
-            Text(_status!, maxLines: 2, overflow: TextOverflow.ellipsis),
-          ],
+              OutlinedButton.icon(
+                onPressed: _loading ? null : _analyzePosition,
+                icon: const Icon(Icons.analytics_outlined),
+                label: Text(
+                  _t(zh: '分析局面', en: 'Analyze', ja: '局面分析', ko: '국면 분석'),
+                ),
+              ),
+              FilledButton.icon(
+                onPressed: _loading ? null : _openContinuePlay,
+                icon: const Icon(Icons.play_arrow, size: 20),
+                label: Text(
+                  _t(zh: '续下', en: 'Continue', ja: '続き対局', ko: '계속 대국'),
+                ),
+              ),
+            ],
+          ),
         ],
-      ),
-    );
-  }
-
-  Widget _stoneWithLabel({
-    required GoStone stone,
-    required String label,
-    required bool selected,
-  }) {
-    final ColorScheme cs = Theme.of(context).colorScheme;
-    final Color textColor = selected ? cs.onSurface : cs.onSurfaceVariant;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        Container(
-          width: 16,
-          height: 16,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: stone == GoStone.black ? Colors.black : Colors.white,
-            border: Border.all(color: Colors.black26),
+        if (_judgeText != null) ...<Widget>[
+          const SizedBox(height: 8),
+          Text(_judgeText!, maxLines: 3, overflow: TextOverflow.ellipsis),
+        ],
+        if (_hintSummary != null) ...<Widget>[
+          const SizedBox(height: 6),
+          Text(
+            _t(
+              zh: '提示落子: $_hintSummary',
+              en: 'Suggested moves: $_hintSummary',
+              ja: '候補手: $_hintSummary',
+              ko: '추천 수: $_hintSummary',
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
           ),
-        ),
-        const SizedBox(width: 2),
-        Text(
-          label,
-          style: TextStyle(
-            color: textColor,
-            fontSize: 12,
-            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-          ),
-        ),
+        ],
       ],
     );
   }
 }
+
 
 class _HintItem {
   const _HintItem({

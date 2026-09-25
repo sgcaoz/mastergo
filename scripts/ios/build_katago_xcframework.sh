@@ -16,9 +16,7 @@ XCFRAMEWORK_OUT="$ROOT_DIR/ios/Frameworks/KataGo.xcframework"
 
 echo "==> Root: $ROOT_DIR"
 
-if [[ ! -d "$KATAGO_SRC" ]]; then
-  git clone https://github.com/lightvector/KataGo.git "$KATAGO_SRC"
-fi
+"$ROOT_DIR/scripts/katago/apply_engine.sh"
 if [[ ! -d "$EIGEN_SRC" ]]; then
   git clone https://gitlab.com/libeigen/eigen.git "$EIGEN_SRC"
 fi
@@ -51,9 +49,10 @@ cmake -S "$KATAGO_SRC/cpp" -B "$BUILD_DEVICE" \
   -DBUILD_ANALYSIS_LIB=ON \
   -DKATAGO_ANALYSIS_STATIC=ON \
   -DNO_GIT_REVISION=1 \
+  -DKATAGO_AUTO_FETCH_DEPS=OFF \
   "${EIGEN_ARGS[@]}" \
   "${EIGEN_INCLUDE_FLAG[@]}"
-cmake --build "$BUILD_DEVICE" -j 8
+cmake --build "$BUILD_DEVICE" --target katago_analysis -j 8
 
 if [[ ! -f "$BUILD_DEVICE/libkatago_analysis.a" ]]; then
   echo "error: device static library not found: $BUILD_DEVICE/libkatago_analysis.a"
@@ -72,9 +71,10 @@ cmake -S "$KATAGO_SRC/cpp" -B "$BUILD_SIM" \
   -DBUILD_ANALYSIS_LIB=ON \
   -DKATAGO_ANALYSIS_STATIC=ON \
   -DNO_GIT_REVISION=1 \
+  -DKATAGO_AUTO_FETCH_DEPS=OFF \
   "${EIGEN_ARGS[@]}" \
   "${EIGEN_INCLUDE_FLAG[@]}"
-cmake --build "$BUILD_SIM" -j 8
+cmake --build "$BUILD_SIM" --target katago_analysis -j 8
 
 if [[ ! -f "$BUILD_SIM/libkatago_analysis.a" ]]; then
   echo "error: simulator static library not found: $BUILD_SIM/libkatago_analysis.a"

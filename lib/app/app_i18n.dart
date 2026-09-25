@@ -100,7 +100,7 @@ class AppStrings {
 
   String get appTitle => switch (current) {
     AppLanguage.zh => '围棋大师',
-    AppLanguage.en => 'mastergo',
+    AppLanguage.en => 'MasterGo',
     AppLanguage.ja => '囲碁マスター',
     AppLanguage.ko => '바둑 마스터',
   };
@@ -120,10 +120,10 @@ class AppStrings {
   };
 
   String get tabPhotoJudge => switch (current) {
-    AppLanguage.zh => '拍照判断',
-    AppLanguage.en => 'Photo Judge',
-    AppLanguage.ja => '写真判定',
-    AppLanguage.ko => '사진 판단',
+    AppLanguage.zh => '拍照识谱',
+    AppLanguage.en => 'Scan Board',
+    AppLanguage.ja => '盤面スキャン',
+    AppLanguage.ko => '기보 촬영',
   };
 
   String get language => switch (current) {
@@ -132,6 +132,29 @@ class AppStrings {
     AppLanguage.ja => '言語',
     AppLanguage.ko => '언어',
   };
+
+  String masterCategoryLabel(String id) {
+    switch (id) {
+      case 'ancient':
+        return pick(zh: '古谱', en: 'Ancient', ja: '古譜', ko: '고보');
+      case 'international':
+        return pick(zh: '国际大赛', en: 'International', ja: '国際棋戦', ko: '국제기전');
+      case 'classic':
+        return pick(zh: '经典对局', en: 'Classic', ja: '名局', ko: '명대국');
+      case 'ai':
+        return pick(
+          zh: '人机对弈',
+          en: 'Human vs AI',
+          ja: '対コンピュータ',
+          ko: '인간 vs AI',
+        );
+      default:
+        return id;
+    }
+  }
+
+  String get masterCategoryAll =>
+      pick(zh: '全部', en: 'All', ja: 'すべて', ko: '전체');
 
   String labelForLanguage(AppLanguage target) {
     return switch (target) {

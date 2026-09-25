@@ -34,3 +34,18 @@ class GameRules {
     );
   }
 }
+
+/// KataGo 没有古谱这档。古谱按无贴目的日本规则送进去，和已经算好的胜率一致。
+String kataGoRulesetName(String ruleset) {
+  final String v = ruleset.trim().toLowerCase();
+  if (v.isEmpty) {
+    return 'chinese';
+  }
+  if (v == 'classical' || v.contains('ancient') || v.contains('classical')) {
+    return 'japanese';
+  }
+  if (v == 'japanese' || v == 'korean' || v == 'chinese') {
+    return v;
+  }
+  return ruleset.trim();
+}

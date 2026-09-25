@@ -28,9 +28,53 @@ class RulePreset {
       whiteHandicapBonusMode: whiteHandicapBonusMode,
     );
   }
+
+  factory RulePreset.fromJson(Map<String, dynamic> json) {
+    final String id = (json['id'] as String? ?? json['ruleset'] as String? ?? '')
+        .trim();
+    if (id.isEmpty) {
+      throw const FormatException('Rule preset is missing id');
+    }
+    return RulePreset(
+      id: id,
+      label: (json['label'] as String? ?? json['name'] as String? ?? id).trim(),
+      defaultKomi: (json['defaultKomi'] as num? ?? json['komi'] as num? ?? 7.5)
+          .toDouble(),
+      scoringRule: _scoringRuleFromString(
+        json['scoringRule'] as String? ?? 'area',
+      ),
+      koRule: _koRuleFromString(json['koRule'] as String? ?? 'simple'),
+      whiteHandicapBonusMode:
+          json['whiteHandicapBonusMode'] as String? ?? 'N',
+      supportsAiPlay: json['supportsAiPlay'] as bool? ?? true,
+    );
+  }
 }
 
-const List<RulePreset> kRulePresets = <RulePreset>[
+ScoringRule _scoringRuleFromString(String raw) {
+  switch (raw.trim().toLowerCase()) {
+    case 'territory':
+      return ScoringRule.territory;
+    default:
+      return ScoringRule.area;
+  }
+}
+
+KoRule _koRuleFromString(String raw) {
+  switch (raw.trim().toLowerCase()) {
+    case 'positionalsuperko':
+    case 'positional_superko':
+      return KoRule.positionalSuperko;
+    case 'situationalsuperko':
+    case 'situational_superko':
+      return KoRule.situationalSuperko;
+    default:
+      return KoRule.simple;
+  }
+}
+
+/// Compiled fallback so tools and tests work before assets are loaded.
+const List<RulePreset> _kFallbackRulePresets = <RulePreset>[
   RulePreset(
     id: 'chinese',
     label: '中国规则',
@@ -62,27 +106,97 @@ const List<RulePreset> kRulePresets = <RulePreset>[
   ),
 ];
 
+class RulePresetCatalog {
+  RulePresetCatalog._();
+
+  static List<RulePreset> _presets = List<RulePreset>.from(
+    _kFallbackRulePresets,
+  );
+
+  static List<RulePreset> get presets => _presets;
+
+  static List<RulePreset> parseDocument(Map<String, dynamic> data) {
+    final Object? raw = data['presets'];
+    if (raw is! List) {
+      return const <RulePreset>[];
+    }
+    final Map<String, RulePreset> byId = <String, RulePreset>{};
+    for (final Object? item in raw) {
+      if (item is! Map) {
+        continue;
+      }
+      try {
+        final RulePreset preset = RulePreset.fromJson(
+          Map<String, dynamic>.from(item),
+        );
+        byId[preset.id] = preset;
+      } catch (_) {
+        // Skip malformed entries; keep fallback for those ids.
+      }
+    }
+    return byId.values.toList(growable: false);
+  }
+
+  static void applyPresets(List<RulePreset> presets) {
+    if (presets.isEmpty) {
+      return;
+    }
+    _presets = List<RulePreset>.from(presets);
+  }
+
+  static void applyDocument(Map<String, dynamic> data) {
+    final List<RulePreset> parsed = parseDocument(data);
+    if (parsed.isEmpty) {
+      return;
+    }
+    _presets = parsed;
+  }
+
+  static void resetToFallback() {
+    _presets = List<RulePreset>.from(_kFallbackRulePresets);
+  }
+}
+
+List<RulePreset> get kRulePresets => RulePresetCatalog.presets;
+
 RulePreset rulePresetFromString(String raw) {
   final String v = raw.trim().toLowerCase();
+  final List<RulePreset> presets = kRulePresets;
+  if (presets.isEmpty) {
+    return _kFallbackRulePresets.first;
+  }
   if (v.isEmpty) {
-    return kRulePresets.first;
+    return presets.first;
   }
-  if (v.contains('japanese') || v.contains('japan')) {
-    return kRulePresets[1];
-  }
-  if (v.contains('korean') || v.contains('korea')) {
-    return kRulePresets[2];
-  }
-  if (v.contains('chinese') || v.contains('china')) {
-    return kRulePresets.first;
-  }
-  if (v.contains('classical') || v.contains('ancient')) {
-    return kRulePresets[3];
-  }
-  for (final RulePreset p in kRulePresets) {
-    if (p.id == v) {
+  for (final RulePreset p in presets) {
+    if (p.id.toLowerCase() == v) {
       return p;
     }
   }
-  return kRulePresets.first;
+  bool matches(String id) =>
+      presets.any((RulePreset p) => p.id.toLowerCase() == id);
+  RulePreset byId(String id) =>
+      presets.firstWhere((RulePreset p) => p.id.toLowerCase() == id);
+
+  if (v.contains('japanese') || v.contains('japan')) {
+    if (matches('japanese')) {
+      return byId('japanese');
+    }
+  }
+  if (v.contains('korean') || v.contains('korea')) {
+    if (matches('korean')) {
+      return byId('korean');
+    }
+  }
+  if (v.contains('classical') || v.contains('ancient')) {
+    if (matches('classical')) {
+      return byId('classical');
+    }
+  }
+  if (v.contains('chinese') || v.contains('china')) {
+    if (matches('chinese')) {
+      return byId('chinese');
+    }
+  }
+  return presets.first;
 }

@@ -180,11 +180,13 @@ void showOwnershipResultSheet(
             const SizedBox(height: 8),
             SizedBox(
               height: 360,
-              child: GoBoardWidget(
-                boardSize: size,
-                board: state.board,
-                lastMovePoint: lastPoint,
-                ownership: ownership,
+              child: GoBoardStage(
+                child: GoBoardWidget(
+                  boardSize: size,
+                  board: state.board,
+                  lastMovePoint: lastPoint,
+                  ownership: ownership,
+                ),
               ),
             ),
             if (ownership != null)

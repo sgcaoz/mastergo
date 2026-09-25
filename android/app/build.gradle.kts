@@ -31,17 +31,17 @@ val hasReleaseSigning =
     !releaseKeyAlias.isNullOrEmpty() &&
     !releaseKeyPassword.isNullOrEmpty()
 
-// Ensure release/Play builds ship KataGo for all supported ABIs.
-val requiredAbis = listOf("arm64-v8a", "armeabi-v7a")
+// Phone APKs: 64-bit only. x86_64 is emulator-only and used to bloat the zip.
+val packagedAbis = listOf("arm64-v8a")
 tasks.register("checkKatagoForRelease") {
     doLast {
         val jniLibsDir = file("src/main/jniLibs")
-        val missing = requiredAbis.filter { abi ->
+        val missing = packagedAbis.filter { abi ->
             !file("$jniLibsDir/$abi/libkatago.so").exists()
         }
         if (missing.isNotEmpty()) {
             throw GradleException(
-                "Release build requires libkatago.so for all ABIs. Missing: ${missing.joinToString()}.\n" +
+                "Release build requires libkatago.so for packaged ABIs. Missing: ${missing.joinToString()}.\n" +
                 "Run once: ABI=all ./scripts/android/build_katago_android.sh"
             )
         }
@@ -62,10 +62,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
-    }
-
     defaultConfig {
         applicationId = "com.boringtime.mastergo"
         minSdk = flutter.minSdkVersion
@@ -73,7 +69,8 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            abiFilters.clear()
+            abiFilters.addAll(packagedAbis)
         }
     }
 
@@ -108,7 +105,14 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            excludes += setOf("**/lib/x86/**", "**/lib/x86_64/**")
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
 }
 

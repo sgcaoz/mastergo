@@ -1,31 +1,40 @@
 {
   "presets": [
     {
-      "id": "chinese_standard",
-      "name": "中国规则",
-      "ruleset": "chinese",
-      "komi": 7.5,
+      "id": "chinese",
+      "label": "中国规则",
+      "defaultKomi": 7.5,
       "scoringRule": "area",
       "koRule": "situationalSuperko",
-      "whiteHandicapBonusMode": "N"
+      "whiteHandicapBonusMode": "N",
+      "supportsAiPlay": true
     },
     {
-      "id": "japanese_standard",
-      "name": "日本规则",
-      "ruleset": "japanese",
-      "komi": 6.5,
+      "id": "japanese",
+      "label": "日本规则",
+      "defaultKomi": 6.5,
       "scoringRule": "territory",
       "koRule": "simple",
-      "whiteHandicapBonusMode": "N-1"
+      "whiteHandicapBonusMode": "N",
+      "supportsAiPlay": true
     },
     {
-      "id": "korean_standard",
-      "name": "韩国规则",
-      "ruleset": "korean",
-      "komi": 6.5,
+      "id": "korean",
+      "label": "韩国规则",
+      "defaultKomi": 6.5,
       "scoringRule": "territory",
-      "koRule": "situationalSuperko",
-      "whiteHandicapBonusMode": "N-1"
+      "koRule": "simple",
+      "whiteHandicapBonusMode": "N",
+      "supportsAiPlay": true
+    },
+    {
+      "id": "classical",
+      "label": "古谱规则（不贴目）",
+      "defaultKomi": 0,
+      "scoringRule": "territory",
+      "koRule": "simple",
+      "whiteHandicapBonusMode": "N",
+      "supportsAiPlay": false
     }
   ]
 }
